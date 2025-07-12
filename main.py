@@ -1,37 +1,21 @@
-import asyncio
-import os
+# === самый-минимальный тестовый скрипт ===
+import os, time
 from datetime import datetime
 from telegram import Bot
-import pytz
 
-# ─── Переменные среды ──────────────────────────────────────────────────────────
+print("=== Bot container started ===")        # строка появится в логах
+
 TOKEN   = os.getenv("TG_TOKEN")
-CHAT_ID = int(os.getenv("CHAT_ID", "-1000000000000"))
+CHAT_ID = os.getenv("CHAT_ID")
 
-if not TOKEN or CHAT_ID == 0:
+if not TOKEN or not CHAT_ID:
     raise RuntimeError("TG_TOKEN или CHAT_ID не заданы в Secrets Fly.io")
 
-LONDON = pytz.timezone("Europe/London")
-bot = Bot(TOKEN)
+Bot(TOKEN).send_message(
+    chat_id=CHAT_ID,
+    text="✅ Crypto-bot online " + datetime.utcnow().strftime("%H:%M:%S")
+)
 
-# ─── Функции ───────────────────────────────────────────────────────────────────
-async def send(text: str):
-    await bot.send_message(chat_id=CHAT_ID, text=text)
-
-async def startup():
-    now = datetime.now(LONDON).strftime("%H:%M:%S")
-    await send(f"✅ Crypto-bot online {now}")
-
-async def heartbeat():
-    while True:
-        await asyncio.sleep(3600)          # раз в час
-        now = datetime.now(LONDON).strftime("%H:%M:%S")
-        await send(f"💓 Alive {now}")
-
-# ─── Запуск ────────────────────────────────────────────────────────────────────
-async def main():
-    await startup()
-    await heartbeat()          # никогда не выйдет
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# держим процесс живым, чтобы Fly не считал его упавшим
+while True:
+    time.sleep(3600)          # спит час, потом снова; можно 300 с
