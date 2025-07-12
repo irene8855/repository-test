@@ -1,4 +1,4 @@
-app = "crypto-alert"
+app = "crypto-alert"   # ← если у приложения другое имя, оставь своё
 
 [env]
-   PYTHONUNBUFFERED = "true"
+  PYTHONUNBUFFERED = "true"
