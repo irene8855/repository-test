@@ -1,14 +1,37 @@
-
-from telegram import Bot
-from datetime import datetime
+import asyncio
 import os
+from datetime import datetime
+from telegram import Bot
+import pytz
 
-token = os.getenv("TG_TOKEN")
-chat_id = os.getenv("CHAT_ID")
+# ─── Переменные среды ──────────────────────────────────────────────────────────
+TOKEN   = os.getenv("TG_TOKEN")
+CHAT_ID = int(os.getenv("CHAT_ID", "-1000000000000"))
 
-if token and chat_id:
-    text = "✅ Crypto bot запущен в " + datetime.utcnow().strftime("%H:%M:%S") + " (UTC)"
-    Bot(token).send_message(chat_id=chat_id, text=text)
-    print("Сообщение отправлено в Telegram.")
-else:
-    print("❌ TG_TOKEN или CHAT_ID не установлены в переменных окружения.")
+if not TOKEN or CHAT_ID == 0:
+    raise RuntimeError("TG_TOKEN или CHAT_ID не заданы в Secrets Fly.io")
+
+LONDON = pytz.timezone("Europe/London")
+bot = Bot(TOKEN)
+
+# ─── Функции ───────────────────────────────────────────────────────────────────
+async def send(text: str):
+    await bot.send_message(chat_id=CHAT_ID, text=text)
+
+async def startup():
+    now = datetime.now(LONDON).strftime("%H:%M:%S")
+    await send(f"✅ Crypto-bot online {now}")
+
+async def heartbeat():
+    while True:
+        await asyncio.sleep(3600)          # раз в час
+        now = datetime.now(LONDON).strftime("%H:%M:%S")
+        await send(f"💓 Alive {now}")
+
+# ─── Запуск ────────────────────────────────────────────────────────────────────
+async def main():
+    await startup()
+    await heartbeat()          # никогда не выйдет
+
+if __name__ == "__main__":
+    asyncio.run(main())
