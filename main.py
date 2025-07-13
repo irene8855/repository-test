@@ -1,22 +1,25 @@
 """
-Crypto-alert bot for Polygon
-• EARLY ALERT при росте ≥ THRESHOLD % за 3-10 мин
-• RESULT через 3 мин: фактический P/L
+Crypto‑alert bot for Polygon
+• EARLY ALERT, когда рост ≥ THRESHOLD % за 3‑10 мин
+• RESULT через 3 мин — фактический P/L
+• Retry + back‑off и резервный API
+• Semaphore ограничивает одновременные запросы (по умолчанию 5)
 """
 
 import os, time, asyncio, aiohttp, pytz
 from datetime import datetime, timedelta
 from telegram import Bot
 
-# ── настройки ───────────────────────────────────────────────────
+# ── параметры ───────────────────────────────────────────────────
 TG_TOKEN  = os.getenv("TG_TOKEN")
 CHAT_ID   = int(os.getenv("CHAT_ID", "-1000000000000"))
 
-CHECK_SEC = 30          # опрос DexScreener, сек
-THRESHOLD = 1.5         # % прироста для сигнала
-WINDOW_LO = 3           # мин – начало окна
-WINDOW_HI = 10          # мин – конец окна
-RESULT_DELAY = 180      # сек до отправки RESULT (3 мин)
+CHECK_SEC     = 30        # частота опроса
+THRESHOLD     = 1.5       # % прироста
+WINDOW_LO     = 3         # мин — начало окна
+WINDOW_HI     = 10        # мин — конец окна
+RESULT_DELAY  = 180       # сек до сообщения RESULT
+MAX_PARALLEL  = 5         # одновременных HTTP‑запросов
 
 LONDON = pytz.timezone("Europe/London")
 
@@ -37,34 +40,49 @@ DEX_LINKS = {
     "uniswap":   ("Uniswap",   "https://app.uniswap.org/#/swap?chain=polygon"),
 }
 
-DEX_API = "https://api.dexscreener.com/latest/dex/tokens/"
-bot     = Bot(TG_TOKEN)
-history = {s: [] for s in TOKENS}      # {sym: [(t, price, dex)]}
+PRIMARY_API = "https://api.dexscreener.com/latest/dex/tokens/"
+BACKUP_API  = "https://api.dexscreener.com/latest/dex/search/?q="
 
-# ── сервис ──────────────────────────────────────────────────────
-async def send(text: str):
-    await bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown")
+bot      = Bot(TG_TOKEN)
+history  = {s: [] for s in TOKENS}              # {sym: [(t, price, dex)]}
+sem      = asyncio.Semaphore(MAX_PARALLEL)
 
-async def fetch_price(session, addr):
-    try:
-        async with session.get(DEX_API + addr, timeout=15) as r:
-            js = await r.json()
-        pools = js.get("pairs", [])
-        best = None
-        for p in pools:
-            if p.get("chainId") == "polygon" and p["quoteToken"]["symbol"].upper() == "USDT":
-                price = float(p["priceUsd"])
-                dex   = p.get("dexId", "unknown").lower()
-                liq   = float(p.get("liquidity", {}).get("usd", 0))
-                if not best or liq > best[2]:
-                    best = (price, dex, liq)
-        if best:
-            return best[0], best[1]
-    except Exception as e:
-        print("fetch error:", e)
+# ── утилиты ──────────────────────────────────────────────────────
+async def send(msg: str):
+    await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+
+async def _query(session, url):
+    async with session.get(url, timeout=15) as r:
+        return await r.json()
+
+async def fetch_price(session, addr: str, retries: int = 2):
+    async with sem:                     # ограничиваем параллель
+        for attempt in range(retries + 1):
+            try:
+                js = await _query(session, PRIMARY_API + addr)
+                pools = js.get("pairs") or []
+                if not pools:           # пробуем резервный API
+                    js = await _query(session, BACKUP_API + addr)
+                    pools = js.get("pairs") or []
+                best = None
+                for p in pools:
+                    if p.get("chainId") == "polygon" and p["quoteToken"]["symbol"].upper() == "USDT":
+                        price = float(p["priceUsd"])
+                        dex   = p.get("dexId", "unknown").lower()
+                        liq   = float(p.get("liquidity", {}).get("usd", 0))
+                        if not best or liq > best[2]:
+                            best = (price, dex, liq)
+                if best:
+                    return best[0], best[1]
+                return None, None
+            except Exception as e:
+                if attempt == retries:
+                    print("fetch error:", e)
+                else:
+                    await asyncio.sleep(2 * (attempt + 1))  # back‑off
     return None, None
 
-# ── RESULT через 3 мин ──────────────────────────────────────────
+# ── результат через 3 мин ───────────────────────────────────────
 async def send_result(sym, addr, entry_price, entry_time, dex_id):
     await asyncio.sleep(RESULT_DELAY)
     async with aiohttp.ClientSession() as s:
@@ -97,30 +115,23 @@ async def monitor(session, sym, addr):
     if not past:
         return
     min_price, _ = min(past, key=lambda x: x[0])
-    if price < min_price * (1 + THRESHOLD / 100):
-        return  # роста ещё нет
 
-    # --- EARLY ALERT ---------------------------------------------------------
-    proj = (price / min_price - 1) * 100
-    buy_time  = now
-    sell_time = now + timedelta(seconds=RESULT_DELAY)
-
-    dex_name, dex_url = DEX_LINKS.get(dex, (dex, f"https://dexscreener.com/polygon/{addr}"))
-    text = (
-        "🚀 *EARLY ALERT*\n"
-        f"{sym} → USDT\n"
-        f"BUY NOW  : {buy_time.strftime('%H:%M')}\n"
-        f"SELL ETA : {sell_time.strftime('%H:%M')}  _(proj +{proj:.2f}%)_\n"
-        f"DEX now  : [{dex_name}]({dex_url})\n"
-        f"Now      : {price:.6f} $\n"
-        f"Min (3–10 m): {min_price:.6f} $\n"
-        f"Threshold: {THRESHOLD}%"
-    )
-    await send(text)
-    print(f"{sym}: alert sent")
-
-    # запланировать RESULT
-    asyncio.create_task(send_result(sym, addr, price, buy_time, dex))
+    if price >= min_price * (1 + THRESHOLD / 100):
+        proj = (price / min_price - 1) * 100
+        entry_time = now
+        dex_name, dex_url = DEX_LINKS.get(dex, (dex, f"https://dexscreener.com/polygon/{addr}"))
+        text = (
+            "🚀 *EARLY ALERT*\n"
+            f"{sym} → USDT\n"
+            f"BUY NOW  : {entry_time.strftime('%H:%M')}\n"
+            f"SELL ETA : {(entry_time + timedelta(seconds=RESULT_DELAY)).strftime('%H:%M')}  _(proj +{proj:.2f}%)_\n"
+            f"DEX now  : [{dex_name}]({dex_url})\n"
+            f"Now      : {price:.6f} $\n"
+            f"Min (3–10 m): {min_price:.6f} $\n"
+            f"Threshold: {THRESHOLD}%"
+        )
+        await send(text)
+        asyncio.create_task(send_result(sym, addr, price, entry_time, dex))
 
 # ── основной цикл ───────────────────────────────────────────────
 async def main_loop():
@@ -136,4 +147,4 @@ if __name__ == "__main__":
     except Exception as e:
         print("❌ Fatal error:", e)
         while True:
-            time.sleep(3600)  # контейнер остаётся живым
+            time.sleep(3600)
