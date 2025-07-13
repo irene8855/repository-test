@@ -1,143 +1,156 @@
 import asyncio
 import aiohttp
-import time
 import os
-from datetime import datetime, timedelta
-import logging
+import time
+from datetime import datetime
+from collections import deque
+from math import isclose
 
-TOKEN = os.getenv("TG_TOKEN")
-CHAT_ID = os.getenv("TG_CHAT_ID")
-THRESHOLD = float(os.getenv("THRESHOLD", 1.5))
+TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+THRESHOLD = 1.5
 MAX_PARALLEL = 5
+RETRY_LIMIT = 3
+RETRY_DELAY = 2
 
-PAIRS = os.getenv("PAIRS", "GMT,SAND,APE").split(",")
-DEX_NAMES = {
+semaphore = asyncio.Semaphore(MAX_PARALLEL)
+recent_signals = deque(maxlen=30)
+
+DEX_URLS = {
     "uniswap": "https://app.uniswap.org",
     "sushiswap": "https://www.sushi.com",
     "pancakeswap": "https://pancakeswap.finance",
-    "stepn": "https://www.stepn.com",
-    "raydium": "https://raydium.io",
+    "stepn": "https://www.google.com/search?q=stepn+exchange",  # fallback
 }
 
-semaphore = asyncio.Semaphore(MAX_PARALLEL)
-results = {}
-session = None
+def ts():
+    return datetime.utcnow().strftime('%H:%M')
 
-
-def log(msg):
-    print(datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), msg)
-
-
-async def send(msg):
+async def send(msg: str):
     if not TOKEN or not CHAT_ID:
-        log("Missing TOKEN or CHAT_ID")
+        print("Missing BOT_TOKEN or CHAT_ID")
         return
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
-    async with session.post(url, json=payload) as resp:
-        if resp.status != 200:
-            log(await resp.text())
-
-
-async def fetch_with_retry(url, retries=3, delay=2):
-    for attempt in range(retries):
+    payload = {"chat_id": CHAT_ID, "text": msg}
+    async with aiohttp.ClientSession() as session:
         try:
-            async with session.get(url, timeout=10) as resp:
-                if resp.status == 200:
-                    return await resp.json()
+            async with session.post(url, data=payload) as r:
+                if r.status != 200:
+                    print(f"Telegram error {r.status}")
         except Exception as e:
-            log(f"fetch error: {e}")
-        await asyncio.sleep(delay)
+            print("Send error:", e)
+
+async def fetch_json(session, url):
+    for attempt in range(RETRY_LIMIT):
+        try:
+            async with session.get(url, timeout=10) as r:
+                if r.status == 200:
+                    return await r.json()
+        except Exception as e:
+            await asyncio.sleep(RETRY_DELAY * (2 ** attempt))
     return None
 
+async def fetch_data():
+    url = "https://api.dexscreener.com/latest/dex/pairs"
+    async with aiohttp.ClientSession() as session:
+        js = await fetch_json(session, url)
+        pools = js.get("pairs") if js else []
 
-async def get_price_data(pair):
+        if not pools:
+            print("fallback: using GeckoTerminal")
+            url = "https://api.geckoterminal.com/api/v2/networks/eth/pools"
+            js = await fetch_json(session, url)
+            pools = js.get("data", []) if js else []
+
+        return pools
+
+async def analyze(pool):
     async with semaphore:
-        url = f"https://api.dexscreener.com/latest/dex/pairs/{pair}"
-        data = await fetch_with_retry(url)
-        if data and data.get("pair"):
-            return data["pair"]
-        # fallback
-        alt_url = f"https://api.geckoterminal.com/api/v2/search/pairs?query={pair}"
-        alt = await fetch_with_retry(alt_url)
-        return alt["data"][0]["attributes"] if alt and "data" in alt and alt["data"] else None
+        try:
+            symbol = pool.get("baseToken", {}).get("symbol")
+            target = pool.get("quoteToken", {}).get("symbol")
+            dex = pool.get("dexId", "")
+            price = float(pool.get("priceUsd") or 0)
+            change = float(pool.get("priceChange", {}).get("m5") or 0)
 
+            if not symbol or not target or not price or not change:
+                return
 
-async def track_pair(pair):
-    global results
-    data = await get_price_data(pair)
-    if not data:
-        return
+            if not isclose(change, 0.0) and change >= THRESHOLD:
+                pair_id = pool.get("pairAddress", "")
+                signal_id = f"{symbol}->{target}:{pair_id}"
 
-    token0 = data.get("baseToken", {}).get("symbol") or data.get("base_symbol", "")
-    token1 = data.get("quoteToken", {}).get("symbol") or data.get("quote_symbol", "")
-    price_now = float(data.get("priceUsd", data.get("price_usd", 0)))
-    min_price = float(data.get("priceNative", price_now)) * 0.985
-    dex = data.get("dexId", "").lower()
-    dex_link = DEX_NAMES.get(dex, f"https://dexscreener.com/{dex}")
+                if signal_id in recent_signals:
+                    return
+                recent_signals.append(signal_id)
 
-    key = f"{token0}-{token1}"
-    if key not in results:
-        results[key] = {"time": datetime.utcnow(), "price": price_now}
+                price_now = price
+                min_price = float(pool.get("priceChange", {}).get("m10Low") or price_now)
 
-        # early alert
-        msg = (
-            f"*ð EARLY ALERT*
-"
-            f"{token0} â {token1}
-"
-            f"BUY NOW  : {datetime.utcnow().strftime('%H:%M')}
-"
-            f"SELL ETA : {(datetime.utcnow() + timedelta(minutes=3)).strftime('%H:%M')}  "
-            f"(proj +{round((price_now - min_price) / min_price * 100, 2)}%)
-"
-            f"DEX now  : [{dex.capitalize()}]({dex_link})
-"
-            f"Now      : {price_now:.6f} $
-"
-            f"Min (3â10 m): {min_price:.6f} $
-"
-            f"Threshold: {THRESHOLD}%"
-        )
-        await send(msg)
+                dex_fmt = dex.capitalize()
+                dex_url = DEX_URLS.get(dex.lower(), f"https://www.google.com/search?q={dex}+dex")
 
-        await asyncio.sleep(180)  # wait 3 mins
+                msg = f"""🚀 EARLY ALERT
+{symbol} → {target}
+BUY NOW  : {ts()} on {dex_fmt}
+SELL ETA : {ts3m()}  (proj +{change:.2f}%)
+DEX now  : {dex_fmt}
+Now      : {price_now:.6f} $
+Min (3–10 m): {min_price:.6f} $
+Threshold: {THRESHOLD}%"""
 
-        final_data = await get_price_data(pair)
-        if final_data:
-            exit_price = float(final_data.get("priceUsd", final_data.get("price_usd", 0)))
-            pl = round((exit_price - price_now) / price_now * 100, 2)
-            result = (
-                f"*â RESULT {token0} â {token1}*
-"
-                f"ENTRY {results[key]['time'].strftime('%H:%M')} : {price_now:.6f} $
-"
-                f"EXIT  {(datetime.utcnow()).strftime('%H:%M')} : {exit_price:.6f} $
-"
-                f"P/L   : *{pl:+.2f}%*
-"
-                f"DEX   : [{dex.capitalize()}]({dex_link})"
-            )
-            await send(result)
+                await send(msg)
+                asyncio.create_task(result_report(symbol, target, price_now, dex_fmt, dex_url))
 
-        del results[key]
+        except Exception as e:
+            print("analyze error:", e)
 
+def ts3m():
+    return (datetime.utcnow() + timedelta(minutes=3)).strftime('%H:%M')
 
-async def runner():
-    await send("ð  Bot updated and running (patched version)")
-    log("DEBUG: patched version running")
+async def result_report(symbol, target, entry_price, dex_fmt, dex_url):
+    await asyncio.sleep(180)
+    url = "https://api.dexscreener.com/latest/dex/pairs"
+    async with aiohttp.ClientSession() as session:
+        js = await fetch_json(session, url)
+        pools = js.get("pairs") if js else []
+
+        for pool in pools:
+            if pool.get("baseToken", {}).get("symbol") == symbol and \
+               pool.get("quoteToken", {}).get("symbol") == target:
+                try:
+                    exit_price = float(pool.get("priceUsd") or 0)
+                    delta = ((exit_price - entry_price) / entry_price) * 100
+
+                    msg = f"""✅ RESULT {symbol} → {target}
+ENTRY {ts(-3)} : {entry_price:.6f} $
+EXIT  {ts()} : {exit_price:.6f} $
+P/L   : {delta:.2f} %
+DEX   : {dex_fmt}
+🔗 {dex_url}"""
+
+                    await send(msg)
+                except Exception as e:
+                    print("Result calc error:", e)
+                break
+
+from datetime import timedelta
+
+def ts(offset_min=0):
+    return (datetime.utcnow() + timedelta(minutes=offset_min)).strftime('%H:%M')
+
+async def main_loop():
+    print("DEBUG: patched version running")
+    await send("✅ Crypto-bot online 🚀")
+
     while True:
-        tasks = [track_pair(pair.strip()) for pair in PAIRS]
-        await asyncio.gather(*tasks)
+        try:
+            pools = await fetch_data()
+            tasks = [analyze(pool) for pool in pools]
+            await asyncio.gather(*tasks)
+        except Exception as e:
+            print("fetch error:", e)
         await asyncio.sleep(30)
 
-
-async def main():
-    global session
-    async with aiohttp.ClientSession() as sess:
-        session = sess
-        await runner()
-
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main_loop())
