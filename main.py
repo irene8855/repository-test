@@ -13,7 +13,11 @@ RETRY_LIMIT   = 3
 RETRY_DELAY   = 2          # сек
 
 # токены, за которыми следим
-TOKENS = {"GMT", "SAND", "LDO", "SUSHI", "UNI", "APE", "AAVE", "LINK"}
+TOKENS = {
+    "BET", "FRAX", "EMT",
+    "GMT", "SAND", "LDO", "SUSHI",
+    "UNI", "APE", "AAVE", "LINK"
+}
 
 # ссылки на DEX-ы (дополнили 1inch)
 DEX_URLS = {
