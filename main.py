@@ -1,141 +1,133 @@
-import os, asyncio, aiohttp, time
+"""
+Crypto-alert bot for Polygon
+ • следит за ценами токенов через DexScreener
+ • ловит рост ≥ THRESHOLD % за 3-10 мин
+ • шлёт алерт в Telegram c:
+      - кликабельным названием биржи,
+      - текущей ценой,
+      - минимумом за окно.
+"""
+
+import os, time, asyncio, aiohttp, pytz
 from datetime import datetime, timedelta
-from collections import deque
 from telegram import Bot
 
-# ─── CONFIG ─────────────────────────────────────────────
+# ──────────────────────────── ПАРАМЕТРЫ ────────────────────────────
 TG_TOKEN  = os.getenv("TG_TOKEN")
 CHAT_ID   = int(os.getenv("CHAT_ID", "-1000000000000"))
 
-CHECK_SEC = 30          # polling interval (sec)
-THRESHOLD = 1.5         # % rise to trigger
-HEARTBEAT = 60          # log heartbeat every N sec
+CHECK_SEC = 30      # опрос API (сек.)
+THRESHOLD = 1.5     # % прироста для сигнала
+LONDON    = pytz.timezone("Europe/London")
 
-# Polygon token addresses
 TOKENS = {
-    "BET" : "0x47da42124a67ef2d2fcea8f53c937b83e9f58fce",
-    "FRAX": "0x45c32fa6df82ead1e2ef74d17b76547eddfaff89",
-    "EMT" : "0x8e0fe2947752be0d5acb1ba75e30e0cbc0f2a57",
-    "GMT" : "0xe3c408bd53c31c085a1746af401a4042954ff740",
-    "SAND": "0xbbba073c31bf03b8acf7c28ef0738decf3695683",
-    "LDO" : "0xc3c7d422809852031b44ab29eec9f1eff2a58756",
-    "SUSHI":"0x0b3f868e0be5597d5db7feb59e1cadbb0fdda50a",
-    "UNI" : "0xb33eaad8d922b1083446dc23f610c2567fb5180f",
-    "APE" : "0x4d224452801aced8b2f0aebe155379bb5d594381",
-    "AAVE": "0xd6df932a45c0f255f85145f286ea0b292b21c90b",
-    "LINK": "0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39"
+    "SUSHI": "0x0b3f868e0be5597d5db7feb59e1cadbb0fdda50a",
+    "LDO":   "0xc3c7d422809852031b44ab29eec9f1eff2a58756",
+    "GMT":   "0xe3c408bd53c31c085a1746af401a4042954ff740",
+    "EMT":   "0x8e0fe2947752be0d5acb1ba75e30e0cbc0f2a57",
+    "SAND":  "0xbbba073c31bf03b8acf7c28ef0738decf3695683",
+    "BET":   "0x47da42124a67ef2d2fcea8f53c937b83e9f58fce",
+    "FRAX":  "0x45c32fa6df82ead1e2ef74d17b76547eddfaff89",
+    "MATIC": "0x0000000000000000000000000000000000001010",  # добавил MATIC для примера
+    # Добавь сюда другие токены, если надо
 }
 
-# DEX display name + link for markdown
-DEX_LINKS = {
-    "sushiswap": ("SushiSwap", "https://app.sushi.com/?chainId=137"),
+DEX_LINKS = {  # id → (название, ссылка)
+    "sushiswap": ("SushiSwap", "https://app.sushi.com?chainId=137"),
     "quickswap": ("QuickSwap", "https://quickswap.exchange/#/swap?chainId=137"),
-    "uniswap":   ("Uniswap",   "https://app.uniswap.org/#/swap?chain=polygon"),
     "1inch":     ("1inch",     "https://app.1inch.io/#/137/simple/swap"),
+    "uniswap":   ("Uniswap",   "https://app.uniswap.org/#/swap?chain=polygon"),
     "apeswap":   ("ApeSwap",   "https://app.apeswap.finance/swap?chainId=137"),
-    "kyberswap": ("KyberSwap", "https://kyberswap.com")
+    "kyberswap": ("KyberSwap", "https://kyberswap.com"),
 }
 
-DEX_URL      = "https://api.dexscreener.com/latest/dex/tokens/"
-GECKO_TOKEN  = "https://api.geckoterminal.com/api/v2/networks/polygon/tokens/"
+DEXS_URL = "https://api.dexscreener.com/latest/dex/tokens/"
 
-bot      = Bot(TG_TOKEN)
-history  = {s: deque(maxlen=600) for s in TOKENS}   # 10 min @ 1 s
-sem      = asyncio.Semaphore(10)
-
-# ─── HELPERS ───────────────────────────────────────────
-def ts(offset=0):
-    return (datetime.utcnow() + timedelta(minutes=offset)).strftime("%H:%M")
-
-async def fetch_json(sess, url):
-    for _ in range(3):
-        try:
-            async with sess.get(url, timeout=10) as r:
-                if r.status == 200:
-                    return await r.json()
-        except Exception:
-            await asyncio.sleep(2)
-    return None
+bot = Bot(TG_TOKEN)
+history = {sym: [] for sym in TOKENS}
 
 async def send(text: str):
-    if not TG_TOKEN or not CHAT_ID:
-        print("❌ Missing TG_TOKEN or CHAT_ID"); return
-    async with aiohttp.ClientSession() as sess:
-        await sess.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-                        data={"chat_id": CHAT_ID,
-                              "text": text,
-                              "parse_mode": "Markdown"})
-
-# ─── PRICE via address ─────────────────────────────────
-async def get_price(sess, addr):
     try:
-        js = await fetch_json(sess, DEX_URL + addr)
-        if js and js.get("pairs"):
-            best = max(
-                (p for p in js["pairs"]
-                 if p["chainId"] == "polygon"
-                 and p["quoteToken"]["symbol"].upper() == "USDT"),
-                key=lambda p: float(p.get("liquidity", {}).get("usd", 0)),
-                default=None
-            )
-            if best:
-                return float(best["priceUsd"]), best["dexId"].lower()
-    except Exception:
-        pass
-    # fallback GeckoTerminal by address
-    js = await fetch_json(sess, GECKO_TOKEN + addr)
-    if js and "data" in js:
-        a = js["data"]["attributes"]
-        return float(a.get("price_usd") or 0), "gecko"
+        await bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown")
+    except Exception as e:
+        print("Telegram send error:", e)
+
+async def fetch_price(session: aiohttp.ClientSession, addr: str):
+    try:
+        async with session.get(DEXS_URL + addr, timeout=15) as resp:
+            js = await resp.json()
+        pools = js.get("pairs", [])
+        best = None
+        for p in pools:
+            if p.get("chainId") == "polygon" and p["quoteToken"]["symbol"].upper() == "USDT":
+                price = float(p["priceUsd"])
+                dex   = p.get("dexId", "unknown").lower()
+                liq   = float(p.get("liquidity", {}).get("usd", 0))
+                if not best or liq > best[2]:
+                    best = (price, dex, liq)
+        if best:
+            return best[0], best[1]
+        if pools:
+            p = pools[0]
+            return float(p["priceUsd"]), p.get("dexId", "unknown").lower()
+    except Exception as e:
+        print("fetch error:", e)
     return None, None
 
-# ─── MONITOR one token ─────────────────────────────────
-async def monitor(sess, sym, addr):
-    async with sem:
-        price, dex = await get_price(sess, addr)
-        if price is None: return
-        now = datetime.utcnow()
-        history[sym].append((now, price))
+def ts():
+    return datetime.now(LONDON).strftime("%H:%M")
 
-        past = [p for t, p in history[sym]
-                if timedelta(minutes=3) <= now - t <= timedelta(minutes=10)]
-        if not past: return
-        min_p = min(past)
-        if price < min_p * (1 + THRESHOLD/100): return
+async def monitor_token(session, sym, addr):
+    now = datetime.now(LONDON)
+    price, dex = await fetch_price(session, addr)
+    if price is None:
+        print(f"{sym}: price fetch failed")
+        return
 
-        proj = (price / min_p - 1) * 100
-        dex_name, dex_url = DEX_LINKS.get(dex,
-                            (dex.capitalize(), f"https://dexscreener.com/polygon/{addr}"))
+    buf = history[sym]
+    buf.append((now, price, dex))
+    # Оставляем данные за последние 10 минут
+    history[sym] = [(t, p, d) for t, p, d in buf if t >= now - timedelta(minutes=10)]
 
-        msg = (f"🚀 *EARLY ALERT*
-"
-               f"{sym} → USDT
-"
-               f"BUY NOW  : {ts()} on {dex_name}
-"
-               f"SELL ETA : {ts(3)}  _(proj +{proj:.2f}%)_
-"
-               f"DEX now  : [{dex_name}]({dex_url})
-"
-               f"Now      : {price:.6f} $
-"
-               f"Min (3–10 m): {min_p:.6f} $
-"
-               f"Threshold: {THRESHOLD}%")
-        await send(msg)
-        print(f"[ALERT] {sym} +{proj:.2f}% via {dex_name}")
+    # Берем цены за 3-10 минут назад
+    past = [(p, d) for t, p, d in history[sym] if timedelta(minutes=3) <= now - t <= timedelta(minutes=10)]
+    if not past:
+        return
 
-# ─── MAIN LOOP ─────────────────────────────────────────
-async def main():
-    await send("✅ *Crypto-bot online* 🚀")
-    hb = time.time() + HEARTBEAT
-    async with aiohttp.ClientSession() as sess:
+    min_price, _ = min(past, key=lambda x: x[0])
+
+    if price >= min_price * (1 + THRESHOLD / 100):
+        proj = (price / min_price - 1) * 100
+        buy  = now.strftime("%H:%M")
+        sell = (now + timedelta(minutes=3)).strftime("%H:%M")
+
+        dex_name, dex_url = DEX_LINKS.get(dex, (dex.capitalize(), f"https://dexscreener.com/polygon/{addr}"))
+
+        text = (
+            "🚀 *EARLY ALERT*\n"
+            f"{sym} → USDT\n"
+            f"BUY NOW  : {buy}\n"
+            f"SELL ETA : {sell}  _(proj +{proj:.2f}%)_\n"
+            f"DEX now  : [{dex_name}]({dex_url})\n"
+            f"Now      : {price:.6f} $\n"
+            f"Min (3–10 m): {min_price:.6f} $\n"
+            f"Threshold: {THRESHOLD}%"
+        )
+        await send(text)
+        print(f"{sym}: alert sent")
+
+async def main_loop():
+    print("DEBUG: Crypto-alert bot started")
+    await send("✅ Crypto-bot online 🚀")
+    async with aiohttp.ClientSession() as session:
         while True:
-            await asyncio.gather(*(monitor(sess, s, a) for s, a in TOKENS.items()))
-            if time.time() >= hb:
-                print("[HB]", datetime.utcnow().strftime("%H:%M:%S"))
-                hb += HEARTBEAT
+            await asyncio.gather(*(monitor_token(session, sym, addr) for sym, addr in TOKENS.items()))
             await asyncio.sleep(CHECK_SEC)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main_loop())
+    except Exception as e:
+        print("Fatal error:", e)
+        while True:
+            time.sleep(3600)
