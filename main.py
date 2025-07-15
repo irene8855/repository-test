@@ -1,179 +1,124 @@
-import asyncio, aiohttp, os
+"""
+Crypto-alert bot for Polygon
+ • следит за ценами токенов через DexScreener
+ • ловит рост ≥ THRESHOLD % за 3-10 мин
+ • шлёт алерт в Telegram c:
+      - кликабельным названием биржи,
+      - текущей ценой,
+      - минимумом за окно.
+"""
+
+import os, time, asyncio, aiohttp, pytz
 from datetime import datetime, timedelta
-from collections import deque
+from telegram import Bot
 
-# ── конфиг ────────────────────────────────────────────────
-TOKEN   = os.getenv("TG_TOKEN", os.getenv("BOT_TOKEN"))
-CHAT_ID = os.getenv("CHAT_ID")
-THRESHOLD     = 1.5          # % роста
-CHECK_SEC     = 30           # период опроса, сек
-MAX_PARALLEL  = 5            # семафор
-RETRY_LIMIT   = 6            # попытки HTTP
-RETRY_DELAY   = 3            # базовая задержка, сек
+# ──────────────────────────── ПАРАМЕТРЫ ────────────────────────────
+TG_TOKEN  = os.getenv("TG_TOKEN")
+CHAT_ID   = int(os.getenv("CHAT_ID", "-1000000000000"))
 
-# токены Polygon (символ : адрес)
-TOKEN_ADDR = {
-    "BET" : "0x47da42124a67ef2d2fcea8f53c937b83e9f58fce",
-    "FRAX": "0x45c32fa6df82ead1e2ef74d17b76547eddfaff89",
-    "EMT" : "0x8e0fe2947752be0d5acb1ba75e30e0cbc0f2a57",
-    "GMT" : "0xe3c408bd53c31c085a1746af401a4042954ff740",
-    "SAND": "0xbbba073c31bf03b8acf7c28ef0738decf3695683",
-    "LDO" : "0xc3c7d422809852031b44ab29eec9f1eff2a58756",
-    "SUSHI":"0x0b3f868e0be5597d5db7feb59e1cadbb0fdda50a",
-    "UNI" : "0xb33eaad8d922b1083446dc23f610c2567fb5180f",
-    "APE" : "0x4d224452801aced8b2f0aebe155379bb5d594381",
-    "AAVE": "0xd6df932a45c0f255f85145f286ea0b292b21c90b",
-    "LINK": "0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39"
-}
-TOKENS = set(TOKEN_ADDR.keys())
+CHECK_SEC = 30      # опрос API (сек.)
+THRESHOLD = 1.5     # % прироста для сигнала
+LONDON    = pytz.timezone("Europe/London")
 
-DEX_URLS = {
-    "sushiswap": "https://www.sushi.com",
-    "uniswap":   "https://app.uniswap.org",
-    "1inch":     "https://app.1inch.io",
-    "pancakeswap":"https://pancakeswap.finance",
-    "quickswap": "https://quickswap.exchange"
+TOKENS = {
+    "SUSHI": "0x0b3f868e0be5597d5db7feb59e1cadbb0fdda50a",
+    "LDO":   "0xc3c7d422809852031b44ab29eec9f1eff2a58756",
+    "GMT":   "0xe3c408bd53c31c085a1746af401a4042954ff740",
+    "EMT":   "0x8e0fe2947752be0d5acb1ba75e30e0cbc0f2a57",
+    "SAND":  "0xbbba073c31bf03b8acf7c28ef0738decf3695683",
+    "BET":   "0x47da42124a67ef2d2fcea8f53c937b83e9f58fce",
+    "FRAX":  "0x45c32fa6df82ead1e2ef74d17b76547eddfaff89",
 }
 
-sem  = asyncio.Semaphore(MAX_PARALLEL)
-seen = deque(maxlen=30)
+DEX_LINKS = {  # id → (показать, ссылка)
+    "sushiswap": ("SushiSwap", "https://app.sushi.com?chainId=137"),
+    "quickswap": ("QuickSwap", "https://quickswap.exchange/#/swap?chainId=137"),
+    "1inch":     ("1inch",     "https://app.1inch.io/#/137/simple/swap"),
+    "uniswap":   ("Uniswap",   "https://app.uniswap.org/#/swap?chain=polygon"),
+    "apeswap":   ("ApeSwap",   "https://app.apeswap.finance/swap?chainId=137"),
+    "kyberswap": ("KyberSwap", "https://kyberswap.com"),
+}
 
-# ── утилиты ───────────────────────────────────────────────
-def ts(off=0): return (datetime.utcnow()+timedelta(minutes=off)).strftime('%H:%M')
+DEX_URL   = "https://api.dexscreener.com/latest/dex/tokens/"
+bot       = Bot(TG_TOKEN)
+history   = {sym: [] for sym in TOKENS}        # [(time, price, dex)]
 
+# ──────────────────────────── СЕРВИС ───────────────────────────────
 async def send(text: str):
-    """Отправка в Telegram c корректным закрытием сессии"""
-    if not TOKEN or not CHAT_ID:
-        print("Missing TG_TOKEN/BOT_TOKEN or CHAT_ID"); return
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    async with aiohttp.ClientSession() as sess:
-        await sess.post(url, data={
-            "chat_id": CHAT_ID,
-            "text": text,
-            "parse_mode": "Markdown"
-        })
+    await bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown")
 
-async def fetch_json(sess, url: str):
-    for attempt in range(RETRY_LIMIT):
-        try:
-            async with sess.get(url, timeout=10) as r:
-                if r.status == 200:
-                    return await r.json()
-        except Exception:
-            await asyncio.sleep(RETRY_DELAY * (2 ** attempt))
-    return None
-
-# ── источники цен ────────────────────────────────────────
-DEX_SCREENER = "https://api.dexscreener.com/latest/dex/pairs"
-GECKO_POOLS  = "https://api.geckoterminal.com/api/v2/networks/polygon/pools"
-GECKO_TOKEN  = "https://api.geckoterminal.com/api/v2/networks/polygon/tokens/"
-
-async def get_pools():
-    async with aiohttp.ClientSession() as sess:
-        # 1) DexScreener
-        js = await fetch_json(sess, DEX_SCREENER)
-        pools = js.get("pairs") if js else []
+async def fetch_price(session: aiohttp.ClientSession, addr: str):
+    try:
+        async with session.get(DEX_URL + addr, timeout=15) as r:
+            js = await r.json()
+        pools = js.get("pairs", [])
+        best = None
+        for p in pools:
+            if p.get("chainId") == "polygon" and p["quoteToken"]["symbol"].upper() == "USDT":
+                price = float(p["priceUsd"])
+                dex   = p.get("dexId", "unknown").lower()
+                liq   = float(p.get("liquidity", {}).get("usd", 0))
+                if not best or liq > best[2]:
+                    best = (price, dex, liq)
+        if best:
+            return best[0], best[1]
         if pools:
-            return pools
+            p = pools[0]
+            return float(p["priceUsd"]), p.get("dexId", "unknown").lower()
+    except Exception as e:
+        print("fetch error:", e)
+    return None, None
 
-        # 2) GeckoTerminal /pools
-        js = await fetch_json(sess, GECKO_POOLS)
-        raw = js.get("data", []) if js else []
-        if raw:
-            pools=[]
-            for it in raw:
-                a = it["attributes"]
-                pools.append({
-                    "baseToken":{"symbol":a["token0_symbol"]},
-                    "quoteToken":{"symbol":a["token1_symbol"]},
-                    "dexId":a.get("dex_name","gecko"),
-                    "priceUsd":a["price_usd"],
-                    "priceChange":{
-                        "m5":float(a.get("price_change_percentage_5m") or 0),
-                        "m10Low":float(a.get("price_low_10m") or a["price_usd"])
-                    }
-                })
-            return pools
+# ────────────────────────── МОНИТОРИНГ ТОКЕНА ──────────────────────
+async def monitor_token(session, sym, addr):
+    now = datetime.now(LONDON)
+    price, dex = await fetch_price(session, addr)
+    if price is None:
+        print(f"{sym}: None")
+        return
 
-        # 3) адресный fallback
-        pools=[]
-        for sym, addr in TOKEN_ADDR.items():
-            js = await fetch_json(sess, GECKO_TOKEN + addr)
-            if not js or "data" not in js:
-                continue
-            a = js["data"]["attributes"]
-            price=float(a.get("price_usd") or 0)
-            chg = float(a.get("price_change_percentage_5m") or 0)
-            low = float(a.get("price_low_10m") or price)
-            pools.append({
-                "baseToken":{"symbol":sym},
-                "quoteToken":{"symbol":"USDT"},
-                "dexId":"gecko",
-                "priceUsd":price,
-                "priceChange":{"m5":chg,"m10Low":low}
-            })
-        return pools
+    buf = history[sym]
+    buf.append((now, price, dex))
+    history[sym] = [(t, p, d) for t, p, d in buf if t >= now - timedelta(minutes=10)]
 
-# ── RESULT через 3 мин ─────────────────────────────────
-async def send_result(sym, entry, dex_fmt, dex_url):
-    await asyncio.sleep(180)
-    async with aiohttp.ClientSession() as sess:
-        js = await fetch_json(sess, GECKO_TOKEN + TOKEN_ADDR[sym])
-        if not js or "data" not in js:
-            return
-        exit_p=float(js["data"]["attributes"].get("price_usd") or 0)
-    pnl=(exit_p/entry - 1)*100
-    await send(
-f"""✅ *RESULT* {sym} → USDT
-ENTRY {ts(-3)} : {entry:.6f} $
-EXIT  {ts()} : {exit_p:.6f} $
-P/L   : {pnl:+.2f} %
-DEX   : [{dex_fmt}]({dex_url})"""
-    )
+    past = [(p, d) for t, p, d in history[sym] if timedelta(minutes=3) <= now - t <= timedelta(minutes=10)]
+    if not past:
+        return
+    min_price, _ = min(past, key=lambda x: x[0])
 
-# ── анализ пула/токена ────────────────────────────────
-async def analyze(pool: dict):
-    async with sem:
-        try:
-            sym = pool["baseToken"]["symbol"]
-            if sym not in TOKENS: return
-            now = float(pool.get("priceUsd") or 0)
-            chg = float(pool["priceChange"].get("m5") or 0)
-            if now==0 or chg < THRESHOLD: return
-            sig = f"{sym}:{int(now*1e6)}"
-            if sig in seen: return
-            seen.append(sig)
+    if price >= min_price * (1 + THRESHOLD / 100):
+        proj = (price / min_price - 1) * 100
+        buy  = now.strftime("%H:%M")
+        sell = (now + timedelta(minutes=3)).strftime("%H:%M")
 
-            low = float(pool["priceChange"].get("m10Low") or now)
-            dex = pool.get("dexId","gecko").lower()
-            dex_fmt = dex.capitalize()
-            dex_url = DEX_URLS.get(dex, f"https://google.com/search?q={dex}+dex")
+        dex_name, dex_url = DEX_LINKS.get(dex, (dex, f"https://dexscreener.com/polygon/{addr}"))
 
-            await send(
-f"""🚀 *EARLY ALERT*
-*{sym} → USDT*
-BUY NOW  : {ts()}
-SELL ETA : {ts(3)} _(proj +{chg:.2f}%)_
-DEX now  : [{dex_fmt}]({dex_url})
-Now      : {now:.6f} $
-Min (3–10 m): {low:.6f} $
-Threshold: {THRESHOLD}%"""
-            )
-            asyncio.create_task(send_result(sym, now, dex_fmt, dex_url))
-        except Exception as e:
-            print("analyze error:", e)
+        text = (
+            "🚀 *EARLY ALERT*\n"
+            f"{sym} → USDT\n"
+            f"BUY NOW  : {buy}\n"
+            f"SELL ETA : {sell}  _(proj +{proj:.2f}%)_\n"
+            f"DEX now  : [{dex_name}]({dex_url})\n"
+            f"Now      : {price:.6f} $\n"
+            f"Min (3–10 m): {min_price:.6f} $\n"
+            f"Threshold: {THRESHOLD}%"
+        )
+        await send(text)
+        print(f"{sym}: alert sent")
 
-# ── основной цикл ─────────────────────────────────────
-async def main():
-    print("DEBUG: address-fallback v2 running")
-    await send("✅ *Crypto-bot online* 🚀")
-    while True:
-        try:
-            pools = await get_pools()
-            await asyncio.gather(*(analyze(p) for p in pools))
-        except Exception as e:
-            print("loop error:", e)
-        await asyncio.sleep(CHECK_SEC)
+# ─────────────────────────── ОСНОВНОЙ ЦИКЛ ─────────────────────────
+async def main_loop():
+    await send("✅ Crypto-bot online 🚀")
+    async with aiohttp.ClientSession() as session:
+        while True:
+            await asyncio.gather(*(monitor_token(session, s, a) for s, a in TOKENS.items()))
+            await asyncio.sleep(CHECK_SEC)
 
+# ────────────────────────────── RUN ────────────────────────────────
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main_loop())
+    except Exception as e:
+        print("❌ Fatal error:", e)
+        while True:
+            time.sleep(3600)   # держим контейнер живым для отладки
