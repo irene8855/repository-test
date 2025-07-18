@@ -4,10 +4,10 @@ from collections import deque
 from telegram import Bot
 import pytz
 
-# ─── Настройки ──────────────────────────────────────────
+# ─── Настройки ─────────────────────────────────────────────
 TG_TOKEN = os.getenv("TG_TOKEN")
 CHAT_ID = int(os.getenv("CHAT_ID", "-1000000000000"))
-ONEINCH_KEY = os.getenv("ONEINCH_KEY")  # не обязательно
+ONEINCH_KEY = os.getenv("ONEINCH_KEY", "")  # можно оставить пустым
 
 CHECK_SEC = 15
 LEAD_WINDOW = 2
@@ -50,12 +50,13 @@ GECKO = "https://api.geckoterminal.com/api/v2/networks/polygon/tokens/"
 
 bot = Bot(TG_TOKEN)
 history = {s: deque(maxlen=600) for s in TOKENS}
+predicted = {}
 sem = asyncio.Semaphore(10)
 
 def ts(dt=None): return (dt or datetime.now(LONDON)).strftime("%H:%M")
 async def send(msg): await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
 
-# ─── Источники данных ──────────────────────────────────
+# ─── Источники данных ──────────────────────────────────────
 async def g_query(sess, url, q):
     try:
         async with sess.post(url, json={"query": q}, timeout=8) as r:
@@ -122,7 +123,7 @@ async def best_price(sess, sym, addr):
             return res
     return await price_gecko(sess, addr) + (None,)
 
-# ─── Мониторинг монет ──────────────────────────────────
+# ─── Основной мониторинг ───────────────────────────────────
 async def monitor(sess, sym, addr):
     async with sem:
         result = await best_price(sess, sym, addr)
@@ -140,53 +141,51 @@ async def monitor(sess, sym, addr):
             entry = now + timedelta(minutes=2)
             exit_ = entry + timedelta(minutes=3)
 
-            # Predictive Alert
-            if speed >= PREDICT_THRESH and proj >= CONFIRM_THRESH:
-                msg = (
+            # Predictive
+            if speed >= PREDICT_THRESH and proj >= CONFIRM_THRESH and sym not in predicted:
+                predicted[sym] = now
+                await send(
 f"🔮 *PREDICTIVE ALERT*\n"
 f"💡 _Вход в сделку через 2 минуты_\n"
 f"{sym} → USDT\n"
-f"⏱ Вход: {ts(entry)}\n"
-f"⏱ Выход: {ts(exit_)}\n"
+f"⏱ Вход: {ts(entry)} | Выход: {ts(exit_)}\n"
 f"📈 Прогноз: +{proj:.2f}%\n"
-f"📡 Источник: {source or '—'}\n"
+f"📡 Источник: {source}\n"
 f"{'🔗 [Купить](' + url + ')' if url else ''}\n"
 f"🕒 {ts(now)}"
-)
-                await send(msg)
+                )
 
-            # Early Alert
-            elif speed >= LEAD_THRESH:
-                msg = (
+            # Early (только если был predictive недавно)
+            if speed >= LEAD_THRESH and sym in predicted and (now - predicted[sym]).seconds <= 180:
+                await send(
 f"📉 *EARLY LEAD ALERT*\n"
-f"⚠️ _Цена уже растёт. Можно входить, но без прогноза_\n"
+f"⚠️ _Цена растёт — можно входить_\n"
 f"{sym} → USDT\n"
 f"📈 Рост: +{speed:.2f}% за {LEAD_WINDOW} мин\n"
-f"📡 Источник: {source or '—'}\n"
+f"📡 Источник: {source}\n"
 f"{'🔗 [Купить](' + url + ')' if url else ''}\n"
 f"🕒 {ts(now)}"
-)
-                await send(msg)
+                )
 
-        # Confirmed Alert
+        # Confirmed
         past = [p for t, p in history[sym] if timedelta(minutes=3) <= now - t <= timedelta(minutes=10)]
         if past:
             min_p = min(past)
-            if price >= min_p * (1 + CONFIRM_THRESH / 100):
-                msg = (
+            if price >= min_p * (1 + CONFIRM_THRESH / 100) and sym in predicted:
+                await send(
 f"✅ *CONFIRMED ALERT*\n"
 f"📊 _Сделка завершилась успешно_\n"
 f"{sym} → USDT\n"
 f"📈 Рост: +{(price / min_p - 1) * 100:.2f}% за 3м\n"
-f"📡 Источник: {source or '—'}\n"
+f"📡 Источник: {source}\n"
 f"{'🔗 [Купить](' + url + ')' if url else ''}\n"
 f"🕒 {ts(now)}"
-)
-                await send(msg)
+                )
+                predicted.pop(sym, None)
 
-# ─── Основной цикл ─────────────────────────────────────
+# ─── Основной цикл ────────────────────────────────────────
 async def main():
-    await send("✅ Crypto Bot запущен и следит за рынком...")
+    await send("✅ Crypto Bot запущен. Следит за рынком...")
     async with aiohttp.ClientSession() as sess:
         while True:
             await asyncio.gather(*(monitor(sess, sym, addr) for sym, addr in TOKENS.items()))
