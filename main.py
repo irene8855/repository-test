@@ -50,12 +50,12 @@ GECKO = "https://api.geckoterminal.com/api/v2/networks/polygon/tokens/"
 
 bot = Bot(TG_TOKEN)
 history = {s: deque(maxlen=600) for s in TOKENS}
+entries = {}  # sym: (entry_time, entry_price)
 sem = asyncio.Semaphore(10)
 
 def ts(dt=None): return (dt or datetime.now(LONDON)).strftime("%H:%M")
 async def send(msg): await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
 
-# Источники данных
 async def g_query(sess, url, q):
     try:
         async with sess.post(url, json={"query": q}, timeout=8) as r:
@@ -122,7 +122,7 @@ async def best_price(sess, sym, addr):
             return res
     return await price_gecko(sess, addr) + (None,)
 
-# Мониторинг монет
+# Мониторинг
 async def monitor(sess, sym, addr):
     async with sem:
         result = await best_price(sess, sym, addr)
@@ -133,6 +133,21 @@ async def monitor(sess, sym, addr):
         now = datetime.now(LONDON)
         history[sym].append((now, price))
 
+        # Отправка сообщения ENTRY ALERT
+        if sym in entries:
+            entry_time, _ = entries[sym]
+            if now >= entry_time and entries[sym][1] is None:
+                entries[sym] = (entry_time, price)
+                msg = (
+f"🚀 *ENTRY ALERT*\n"
+f"{sym} → USDT\n"
+f"💰 Цена входа: {price:.4f}\n"
+f"📡 Источник: {source or '—'}\n"
+f"{'🔗 [Купить](' + url + ')' if url else ''}\n"
+f"🕒 {ts(now)}"
+)
+                await send(msg)
+
         last = [p for t, p in history[sym] if now - t <= timedelta(minutes=LEAD_WINDOW)]
         if len(last) >= 3:
             speed = (price / min(last) - 1) * 100
@@ -140,7 +155,8 @@ async def monitor(sess, sym, addr):
             entry = now + timedelta(minutes=2)
             exit_ = entry + timedelta(minutes=3)
 
-            if speed >= PREDICT_THRESH and proj >= CONFIRM_THRESH:
+            if speed >= PREDICT_THRESH and proj >= CONFIRM_THRESH and sym not in entries:
+                entries[sym] = (entry, None)
                 msg = (
 f"🔮 *PREDICTIVE ALERT*\n"
 f"💡 _Вход в сделку через 2 минуты_\n"
@@ -165,22 +181,24 @@ f"🕒 {ts(now)}"
 )
                 await send(msg)
 
-        past = [p for t, p in history[sym] if timedelta(minutes=3) <= now - t <= timedelta(minutes=10)]
-        if past:
-            min_p = min(past)
-            if price >= min_p * (1 + CONFIRM_THRESH / 100):
+        # Подтверждение сделки
+        if sym in entries:
+            entry_time, entry_price = entries[sym]
+            if entry_price and now >= entry_time + timedelta(minutes=3):
+                growth = (price / entry_price - 1) * 100
                 msg = (
 f"✅ *CONFIRMED ALERT*\n"
-f"📊 _Сделка завершилась успешно_\n"
+f"📊 _Сделка завершена_\n"
 f"{sym} → USDT\n"
-f"📈 Рост: +{(price / min_p - 1) * 100:.2f}% за 3м\n"
+f"📈 Результат: {'+' if growth >= 0 else ''}{growth:.2f}% за 3м\n"
 f"📡 Источник: {source or '—'}\n"
 f"{'🔗 [Купить](' + url + ')' if url else ''}\n"
 f"🕒 {ts(now)}"
 )
                 await send(msg)
+                del entries[sym]
 
-# Основной цикл
+# Главный цикл
 async def main():
     await send("✅ Crypto Bot запущен и следит за рынком...")
     async with aiohttp.ClientSession() as sess:
