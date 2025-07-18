@@ -1,4 +1,4 @@
-app = "crypto-alert"   # ← если у приложения другое имя, оставь своё
+app = "repository-test-updated"
 
 [env]
   PYTHONUNBUFFERED = "true"
