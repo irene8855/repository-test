@@ -142,38 +142,25 @@ async def monitor(sess, sym, addr):
 
             if speed >= PREDICT_THRESH and proj >= CONFIRM_THRESH:
                 msg = (
-f"🔮 *PREDICTIVE ALERT*
-"
-f"💡 _Вход в сделку через 2 минуты_
-"
-f"{sym} → USDT
-"
-f"⏱ Вход: {ts(entry)} | Выход: {ts(exit_)}
-"
-f"📈 Прогноз: +{proj:.2f}%
-"
-f"📡 Источник: {source or '—'}
-"
-f"{'🔗 [Купить](' + url + ')' if url else ''}
-"
+f"🔮 *PREDICTIVE ALERT*\n"
+f"💡 _Вход в сделку через 2 минуты_\n"
+f"{sym} → USDT\n"
+f"⏱ Вход: {ts(entry)} | Выход: {ts(exit_)}\n"
+f"📈 Прогноз: +{proj:.2f}%\n"
+f"📡 Источник: {source or '—'}\n"
+f"{'🔗 [Купить](' + url + ')' if url else ''}\n"
 f"🕒 {ts(now)}"
 )
                 await send(msg)
 
             elif speed >= LEAD_THRESH:
                 msg = (
-f"📉 *EARLY LEAD ALERT*
-"
-f"⚠️ _Цена уже растёт. Можно входить, но без прогноза_
-"
-f"{sym} → USDT
-"
-f"📈 Рост: +{speed:.2f}% за {LEAD_WINDOW} мин
-"
-f"📡 Источник: {source or '—'}
-"
-f"{'🔗 [Купить](' + url + ')' if url else ''}
-"
+f"📉 *EARLY LEAD ALERT*\n"
+f"⚠️ _Цена уже растёт. Можно входить, но без прогноза_\n"
+f"{sym} → USDT\n"
+f"📈 Рост: +{speed:.2f}% за {LEAD_WINDOW} мин\n"
+f"📡 Источник: {source or '—'}\n"
+f"{'🔗 [Купить](' + url + ')' if url else ''}\n"
 f"🕒 {ts(now)}"
 )
                 await send(msg)
@@ -183,18 +170,12 @@ f"🕒 {ts(now)}"
             min_p = min(past)
             if price >= min_p * (1 + CONFIRM_THRESH / 100):
                 msg = (
-f"✅ *CONFIRMED ALERT*
-"
-f"📊 _Сделка завершилась успешно_
-"
-f"{sym} → USDT
-"
-f"📈 Рост: +{(price / min_p - 1) * 100:.2f}% за 3м
-"
-f"📡 Источник: {source or '—'}
-"
-f"{'🔗 [Купить](' + url + ')' if url else ''}
-"
+f"✅ *CONFIRMED ALERT*\n"
+f"📊 _Сделка завершилась успешно_\n"
+f"{sym} → USDT\n"
+f"📈 Рост: +{(price / min_p - 1) * 100:.2f}% за 3м\n"
+f"📡 Источник: {source or '—'}\n"
+f"{'🔗 [Купить](' + url + ')' if url else ''}\n"
 f"🕒 {ts(now)}"
 )
                 await send(msg)
