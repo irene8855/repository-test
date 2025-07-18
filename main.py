@@ -4,15 +4,16 @@ from collections import deque
 from telegram import Bot
 import pytz
 
-# ─── настройки ───────────────────────────────────────────
+# ─── Настройки ──────────────────────────────────────────
 TG_TOKEN = os.getenv("TG_TOKEN")
 CHAT_ID = int(os.getenv("CHAT_ID", "-1000000000000"))
-ONEINCH_KEY = os.getenv("ONEINCH_KEY")  # ← можно не задавать
+ONEINCH_KEY = os.getenv("ONEINCH_KEY")  # не обязательно
 
 CHECK_SEC = 15
-LEAD_WINDOW = 2  # мин
-LEAD_THRESH = 0.7  # % за окно
-CONFIRM_THRESH = 1.5  # итог % к min-10m
+LEAD_WINDOW = 2
+LEAD_THRESH = 0.7
+CONFIRM_THRESH = 1.5
+PREDICT_THRESH = 0.9
 LONDON = pytz.timezone("Europe/London")
 
 TOKENS = {
@@ -51,10 +52,10 @@ bot = Bot(TG_TOKEN)
 history = {s: deque(maxlen=600) for s in TOKENS}
 sem = asyncio.Semaphore(10)
 
-# ─── утилиты ─────────────────────────────────────────────
 def ts(dt=None): return (dt or datetime.now(LONDON)).strftime("%H:%M")
 async def send(msg): await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
 
+# ─── Источники данных ──────────────────────────────────
 async def g_query(sess, url, q):
     try:
         async with sess.post(url, json={"query": q}, timeout=8) as r:
@@ -121,7 +122,7 @@ async def best_price(sess, sym, addr):
             return res
     return await price_gecko(sess, addr) + (None,)
 
-# ─── монитор токена ────────────────────────────────────
+# ─── Мониторинг монет ──────────────────────────────────
 async def monitor(sess, sym, addr):
     async with sem:
         result = await best_price(sess, sym, addr)
@@ -136,24 +137,45 @@ async def monitor(sess, sym, addr):
         if len(last) >= 3:
             speed = (price / min(last) - 1) * 100
             proj = speed * (3 / LEAD_WINDOW)
-            if speed >= LEAD_THRESH and proj >= CONFIRM_THRESH:
+            entry = now + timedelta(minutes=2)
+            exit_ = entry + timedelta(minutes=3)
+
+            # Predictive Alert
+            if speed >= PREDICT_THRESH and proj >= CONFIRM_THRESH:
                 msg = (
-f"📉 *EARLY LEAD ALERT*\n"
+f"🔮 *PREDICTIVE ALERT*\n"
+f"💡 _Вход в сделку через 2 минуты_\n"
 f"{sym} → USDT\n"
-f"📈 Рост: +{speed:.2f}% за {LEAD_WINDOW} мин\n"
-f"🕰 Прогноз на 3 мин: +{proj:.2f}%\n"
+f"⏱ Вход: {ts(entry)}\n"
+f"⏱ Выход: {ts(exit_)}\n"
+f"📈 Прогноз: +{proj:.2f}%\n"
 f"📡 Источник: {source or '—'}\n"
 f"{'🔗 [Купить](' + url + ')' if url else ''}\n"
 f"🕒 {ts(now)}"
 )
                 await send(msg)
 
+            # Early Alert
+            elif speed >= LEAD_THRESH:
+                msg = (
+f"📉 *EARLY LEAD ALERT*\n"
+f"⚠️ _Цена уже растёт. Можно входить, но без прогноза_\n"
+f"{sym} → USDT\n"
+f"📈 Рост: +{speed:.2f}% за {LEAD_WINDOW} мин\n"
+f"📡 Источник: {source or '—'}\n"
+f"{'🔗 [Купить](' + url + ')' if url else ''}\n"
+f"🕒 {ts(now)}"
+)
+                await send(msg)
+
+        # Confirmed Alert
         past = [p for t, p in history[sym] if timedelta(minutes=3) <= now - t <= timedelta(minutes=10)]
         if past:
             min_p = min(past)
             if price >= min_p * (1 + CONFIRM_THRESH / 100):
                 msg = (
 f"✅ *CONFIRMED ALERT*\n"
+f"📊 _Сделка завершилась успешно_\n"
 f"{sym} → USDT\n"
 f"📈 Рост: +{(price / min_p - 1) * 100:.2f}% за 3м\n"
 f"📡 Источник: {source or '—'}\n"
@@ -162,9 +184,9 @@ f"🕒 {ts(now)}"
 )
                 await send(msg)
 
-# ─── основной цикл ─────────────────────────────────────
+# ─── Основной цикл ─────────────────────────────────────
 async def main():
-    await send("✅ Crypto-bot online 🚀")
+    await send("✅ Crypto Bot запущен и следит за рынком...")
     async with aiohttp.ClientSession() as sess:
         while True:
             await asyncio.gather(*(monitor(sess, sym, addr) for sym, addr in TOKENS.items()))
