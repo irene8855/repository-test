@@ -5,17 +5,20 @@ from telegram import Bot
 import pytz
 import traceback
 
+# Настройки токена и чата
 TG_TOKEN = os.getenv("TG_TOKEN")
 CHAT_ID = int(os.getenv("CHAT_ID", "-1000000000000"))
 
+# Интервалы и пороги
 CHECK_SEC = 15
 LEAD_WINDOW = 2
 VOLATILITY_WINDOW = 5
 TREND_WINDOW = 3
-LEAD_THRESH = 0.7
-CONFIRM_THRESH = 2.5
-PREDICT_THRESH = 2.5
-CONFIDENCE_THRESH = 1.5
+
+PREDICT_THRESH = 1.2       # % роста за LEAD_WINDOW для сигнала "Predictive"
+CONFIRM_THRESH = 2.0        # ожидаемый прирост за 5 минут
+LEAD_THRESH = 0.7           # минимальный прирост для "Early Lead"
+CONFIDENCE_THRESH = 1.5     # рост / волатильность
 
 LONDON = pytz.timezone("Europe/London")
 
@@ -53,8 +56,10 @@ history = {s: deque(maxlen=600) for s in TOKENS}
 entries = {}
 sem = asyncio.Semaphore(10)
 
+# Формат времени
 def ts(dt=None): return (dt or datetime.now(LONDON)).strftime("%H:%M")
 
+# Логирование
 def log(msg: str):
     with open("logs.txt", "a") as f:
         f.write(f"{datetime.now().isoformat()} {msg}\n")
@@ -63,6 +68,7 @@ async def send(msg):
     await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
     log(msg.replace("\n", " | "))
 
+# Граф-запросы к DEX
 async def g_query(sess, url, q):
     try:
         async with sess.post(url, json={"query": q}, timeout=8) as r:
@@ -133,7 +139,7 @@ async def monitor(sess, sym, addr):
                 entry_time, _ = entries[sym]
                 if now >= entry_time and entries[sym][1] is None:
                     entries[sym] = (entry_time, price)
-                    await send(f"🚀 *ENTRY ALERT*\n{sym} → USDT\n💰 Цена входа: {price:.4f}\n📡 Источник: {source or '—'}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
+                    await send(f"🚀 *ENTRY ALERT*\n{sym} → USDT\n💰 Цена входа: {price:.4f}\n📡 Источник: {source}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
 
             if len(lead) >= 3 and all(p is not None for p in lead):
                 min_lead = min(lead)
@@ -148,25 +154,29 @@ async def monitor(sess, sym, addr):
 
                 if (
                     speed >= PREDICT_THRESH and proj >= CONFIRM_THRESH and sym not in entries and
-                    check_trend(trend_window) and confidence >= CONFIDENCE_THRESH and price > min_lead
+                    check_trend(trend_window) and confidence >= CONFIDENCE_THRESH
                 ):
                     entries[sym] = (entry, None)
-                    await send(f"🔮 *PREDICTIVE ALERT*\n💡 _Вход в сделку через 2 минуты_\n{sym} → USDT\n⏱ Вход: {ts(entry)} | Выход: {ts(exit_)}\n📈 Прогноз: +{proj:.2f}%\n📡 Источник: {source or '—'}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
-                elif speed >= LEAD_THRESH:
-                    await send(f"📉 *EARLY LEAD ALERT*\n⚠️ _Цена уже растёт. Можно входить, но без прогноза_\n{sym} → USDT\n📈 Рост: +{speed:.2f}% за {LEAD_WINDOW} мин\n📡 Источник: {source or '—'}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
+                    await send(f"🔮 *PREDICTIVE ALERT*\n💡 _Ожидается рост_\n{sym} → USDT\n⏱ Вход: {ts(entry)} | Выход: {ts(exit_)}\n📈 Прогноз: +{proj:.2f}%\n📡 Источник: {source}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
+
+                elif speed >= LEAD_THRESH and sym not in entries:
+                    await send(f"📉 *EARLY LEAD ALERT*\n⚠️ _Цена уже растёт. Возможен импульс_\n{sym} → USDT\n📈 Рост: +{speed:.2f}% за {LEAD_WINDOW}м\n📡 Источник: {source}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
+                else:
+                    log(f"[FILTERED] {sym}: speed={speed:.2f}, conf={confidence:.2f}, trend={check_trend(trend_window)}")
 
             if sym in entries:
                 entry_time, entry_price = entries[sym]
                 if entry_price and now >= entry_time + timedelta(minutes=3):
                     growth = (price / entry_price - 1) * 100
-                    await send(f"✅ *CONFIRMED ALERT*\n📊 _Сделка завершена_\n{sym} → USDT\n📈 Результат: {'+' if growth >= 0 else ''}{growth:.2f}% за 3м\n📡 Источник: {source or '—'}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
+                    await send(f"✅ *CONFIRMED ALERT*\n📊 _Сделка завершена_\n{sym} → USDT\n📈 Результат: {'+' if growth >= 0 else ''}{growth:.2f}% за 3м\n📡 Источник: {source}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
                     del entries[sym]
 
         except Exception as e:
             log(f"[MONITOR ERROR] {sym}: {e}")
+            traceback.print_exc()
 
 async def main():
-    await send("✅ Crypto Bot запущен с новыми фильтрами: ликвидность, confidence, точность.")
+    await send("✅ Crypto Bot перезапущен с актуальными фильтрами и логикой.")
     async with aiohttp.ClientSession() as sess:
         while True:
             try:
