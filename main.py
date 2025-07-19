@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from collections import deque
 from telegram import Bot
 import pytz
+import traceback
 
 TG_TOKEN = os.getenv("TG_TOKEN")
 CHAT_ID = int(os.getenv("CHAT_ID", "-1000000000000"))
@@ -156,6 +157,7 @@ async def main():
                 await asyncio.gather(*(monitor(sess, sym, addr) for sym, addr in TOKENS.items()))
             except Exception as e:
                 print(f"[MAIN LOOP ERROR] {e}")
+                traceback.print_exc()
             await asyncio.sleep(CHECK_SEC)
 
 if __name__ == "__main__":
