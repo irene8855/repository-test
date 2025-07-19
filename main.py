@@ -4,18 +4,18 @@ from collections import deque
 from telegram import Bot
 import pytz
 
-# ─── Настройки ──────────────────────────────────────────
 TG_TOKEN = os.getenv("TG_TOKEN")
 CHAT_ID = int(os.getenv("CHAT_ID", "-1000000000000"))
-ONEINCH_KEY = os.getenv("ONEINCH_KEY")  # не обязательно
 
 CHECK_SEC = 15
 LEAD_WINDOW = 2
 VOLATILITY_WINDOW = 5
 TREND_WINDOW = 3
 LEAD_THRESH = 0.7
-CONFIRM_THRESH = 1.5
-PREDICT_THRESH = 0.9
+CONFIRM_THRESH = 2.5   # Повышено
+PREDICT_THRESH = 2.5   # Повышено
+CONFIDENCE_THRESH = 1.5
+
 LONDON = pytz.timezone("Europe/London")
 
 TOKENS = {
@@ -43,8 +43,6 @@ SUSHI_POOLS = {
     "GMT": "0xe3c408bd53c31c085a1746af401a4042954ff740"
 }
 
-USDT = "0xc2132d05d31c914a87c6611c10748aacb21d4fb"
-
 DEX_URL = "https://api.dexscreener.com/latest/dex/tokens/"
 GRAPH_UNI = "https://api.thegraph.com/subgraphs/name/ianlapham/uniswap-v3-polygon"
 GRAPH_SUSHI = "https://api.thegraph.com/subgraphs/name/sushiswap/v3-polygon"
@@ -66,50 +64,56 @@ async def g_query(sess, url, q):
 
 async def price_uniswap(sess, sym):
     pid = UNI_POOLS.get(sym)
-    if not pid: return None, None
+    if not pid: return None
     pool = await g_query(sess, GRAPH_UNI, f'{{pool(id:"{pid}"){{token0Price}}}}')
-    return (float(pool["token0Price"]), "Uniswap") if pool else (None, None)
+    if pool: return float(pool["token0Price"]), "Uniswap", ""
+    return None
 
 async def price_sushi(sess, sym):
     pid = SUSHI_POOLS.get(sym)
-    if not pid: return None, None
+    if not pid: return None
     pool = await g_query(sess, GRAPH_SUSHI, f'{{pool(id:"{pid}"){{token0Price}}}}')
-    return (float(pool["token0Price"]), "SushiSwap") if pool else (None, None)
+    if pool: return float(pool["token0Price"]), "SushiSwap", ""
+    return None
 
 async def price_dex(sess, addr):
     try:
         js = await (await sess.get(DEX_URL + addr, timeout=10)).json()
         pools = js.get("pairs") or []
-        if not pools: return None, None, None
+        if not pools: return None
         best = max(pools, key=lambda p: float(p.get("liquidity", {}).get("usd", 0)))
         price = float(best["priceUsd"])
         platform = best["dexId"].capitalize()
         url = best.get("url", "")
         return price, platform, url
-    except: return None, None, None
+    except: return None
 
 async def best_price(sess, sym, addr):
-    tasks = [price_dex(sess, addr), price_uniswap(sess, sym), price_sushi(sess, sym)]
-    results = await asyncio.gather(*tasks)
-    for res in results:
-        if res and res[0]: return res
-    return None, None, None
+    results = await asyncio.gather(
+        price_dex(sess, addr),
+        price_uniswap(sess, sym),
+        price_sushi(sess, sym)
+    )
+    best = [r for r in results if r and r[0] is not None]
+    if not best: return None, None, None
+    return max(best, key=lambda x: x[0])  # наибольшая цена — при равных условиях часто коррелирует с ликвидностью
 
 def check_volatility(prices):
-    return max(prices) / min(prices) - 1 >= 0.01 if len(prices) >= 2 else False
+    if len(prices) < 2: return 0
+    return max(prices) / min(prices) - 1
 
 def check_trend(prices):
     return prices[-1] > prices[0] if len(prices) >= 2 else False
 
 async def monitor(sess, sym, addr):
     async with sem:
-        price, source, url = await best_price(sess, sym, addr)
-        if not price: return
+        res = await best_price(sess, sym, addr)
+        if not res: return
+        price, source, url = res
 
         now = datetime.now(LONDON)
         history[sym].append((now, price))
 
-        prices = [p for t, p in history[sym]]
         lead = [p for t, p in history[sym] if now - t <= timedelta(minutes=LEAD_WINDOW)]
         vol_window = [p for t, p in history[sym] if now - t <= timedelta(minutes=VOLATILITY_WINDOW)]
         trend_window = [p for t, p in history[sym] if now - t <= timedelta(minutes=TREND_WINDOW)]
@@ -122,13 +126,15 @@ async def monitor(sess, sym, addr):
 
         if len(lead) >= 3:
             speed = (price / min(lead) - 1) * 100
+            volatility = check_volatility(vol_window)
+            confidence = speed / volatility if volatility > 0 else 0
             proj = speed * (3 / LEAD_WINDOW)
             entry = now + timedelta(minutes=2)
             exit_ = entry + timedelta(minutes=3)
 
             if (
-                speed >= PREDICT_THRESH and proj >= CONFIRM_THRESH and sym not in entries
-                and check_volatility(vol_window) and check_trend(trend_window)
+                speed >= PREDICT_THRESH and proj >= CONFIRM_THRESH and sym not in entries and
+                check_trend(trend_window) and confidence >= CONFIDENCE_THRESH and price > min(lead)
             ):
                 entries[sym] = (entry, None)
                 await send(f"🔮 *PREDICTIVE ALERT*\n💡 _Вход в сделку через 2 минуты_\n{sym} → USDT\n⏱ Вход: {ts(entry)} | Выход: {ts(exit_)}\n📈 Прогноз: +{proj:.2f}%\n📡 Источник: {source or '—'}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
@@ -143,7 +149,7 @@ async def monitor(sess, sym, addr):
                 del entries[sym]
 
 async def main():
-    await send("✅ Crypto Bot обновлён: логика тренда и волатильности активна.")
+    await send("✅ Crypto Bot запущен с новыми фильтрами: ликвидность, confidence, точность.")
     async with aiohttp.ClientSession() as sess:
         while True:
             await asyncio.gather(*(monitor(sess, sym, addr) for sym, addr in TOKENS.items()))
