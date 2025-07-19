@@ -143,7 +143,7 @@ async def monitor(sess, sym, addr):
                 del entries[sym]
 
 async def main():
-    await send("✅ Crypto Bot обновлён: улучшены фильтры прогноза и волатильности.")
+    await send("✅ Crypto Bot обновлён: логика тренда и волатильности активна.")
     async with aiohttp.ClientSession() as sess:
         while True:
             await asyncio.gather(*(monitor(sess, sym, addr) for sym, addr in TOKENS.items()))
