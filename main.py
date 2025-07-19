@@ -101,37 +101,23 @@ async def best_price(sess, sym, addr):
 
 def check_volatility(prices):
     if len(prices) < 2: return 0
-    try:
-        min_price = min(prices)
-        max_price = max(prices)
-        if min_price == 0:  # избегаем деления на 0
-            return 0
-        return max_price / min_price - 1
-    except Exception:
-        return 0
+    return max(prices) / min(prices) - 1
 
 def check_trend(prices):
-    if len(prices) < 2:
-        return False
-    if prices[0] is None or prices[-1] is None:
-        return False
-    return prices[-1] > prices[0]
+    return prices[-1] > prices[0] if len(prices) >= 2 else False
 
 async def monitor(sess, sym, addr):
     async with sem:
         res = await best_price(sess, sym, addr)
-        if not res:
-            return
+        if not res: return
         price, source, url = res
-        if price is None:
-            return
 
         now = datetime.now(LONDON)
         history[sym].append((now, price))
 
-        lead = [p for t, p in history[sym] if now - t <= timedelta(minutes=LEAD_WINDOW) and p is not None]
-        vol_window = [p for t, p in history[sym] if now - t <= timedelta(minutes=VOLATILITY_WINDOW) and p is not None]
-        trend_window = [p for t, p in history[sym] if now - t <= timedelta(minutes=TREND_WINDOW) and p is not None]
+        lead = [p for t, p in history[sym] if now - t <= timedelta(minutes=LEAD_WINDOW)]
+        vol_window = [p for t, p in history[sym] if now - t <= timedelta(minutes=VOLATILITY_WINDOW)]
+        trend_window = [p for t, p in history[sym] if now - t <= timedelta(minutes=TREND_WINDOW)]
 
         if sym in entries:
             entry_time, _ = entries[sym]
@@ -140,11 +126,13 @@ async def monitor(sess, sym, addr):
                 await send(f"🚀 *ENTRY ALERT*\n{sym} → USDT\n💰 Цена входа: {price:.4f}\n📡 Источник: {source or '—'}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
 
         if len(lead) >= 3:
-            min_lead = min(lead)
-            if min_lead is None or min_lead == 0:
+            valid_lead = [p for p in lead if p is not None]
+            if not valid_lead:
+                return
+            min_lead = min(valid_lead)
+            if not min_lead:
                 return
             speed = (price / min_lead - 1) * 100
-
             volatility = check_volatility(vol_window)
             confidence = speed / volatility if volatility > 0 else 0
             proj = speed * (3 / LEAD_WINDOW)
@@ -158,4 +146,25 @@ async def monitor(sess, sym, addr):
                 entries[sym] = (entry, None)
                 await send(f"🔮 *PREDICTIVE ALERT*\n💡 _Вход в сделку через 2 минуты_\n{sym} → USDT\n⏱ Вход: {ts(entry)} | Выход: {ts(exit_)}\n📈 Прогноз: +{proj:.2f}%\n📡 Источник: {source or '—'}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
             elif speed >= LEAD_THRESH:
-                await send(f"📉 *EARLY LEAD ALERT*\n⚠️ _Цена уже растёт. Можно входить, но без прогноза_\n{sym} → USDT\n📈 Рост: +{speed:.2f}% за {LEAD_WINDOW} мин\n📡 Источник: {source or
+                await send(f"📉 *EARLY LEAD ALERT*\n⚠️ _Цена уже растёт. Можно входить, но без прогноза_\n{sym} → USDT\n📈 Рост: +{speed:.2f}% за {LEAD_WINDOW} мин\n📡 Источник: {source or '—'}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
+
+        if sym in entries:
+            entry_time, entry_price = entries[sym]
+            if entry_price and now >= entry_time + timedelta(minutes=3):
+                growth = (price / entry_price - 1) * 100
+                await send(f"✅ *CONFIRMED ALERT*\n📊 _Сделка завершена_\n{sym} → USDT\n📈 Результат: {'+' if growth >= 0 else ''}{growth:.2f}% за 3м\n📡 Источник: {source or '—'}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
+                del entries[sym]
+
+async def main():
+    await send("✅ Crypto Bot запущен с новыми фильтрами: ликвидность, confidence, точность.")
+    async with aiohttp.ClientSession() as sess:
+        while True:
+            try:
+                await asyncio.gather(*(monitor(sess, sym, addr) for sym, addr in TOKENS.items()))
+            except Exception as e:
+                print(f"[MAIN LOOP ERROR] {e}")
+                traceback.print_exc()
+            await asyncio.sleep(CHECK_SEC)
+
+if __name__ == "__main__":
+    asyncio.run(main())
