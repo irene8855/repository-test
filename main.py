@@ -11,6 +11,8 @@ ONEINCH_KEY = os.getenv("ONEINCH_KEY")  # не обязательно
 
 CHECK_SEC = 15
 LEAD_WINDOW = 2
+VOLATILITY_WINDOW = 5
+TREND_WINDOW = 3
 LEAD_THRESH = 0.7
 CONFIRM_THRESH = 1.5
 PREDICT_THRESH = 0.9
@@ -46,11 +48,10 @@ USDT = "0xc2132d05d31c914a87c6611c10748aacb21d4fb"
 DEX_URL = "https://api.dexscreener.com/latest/dex/tokens/"
 GRAPH_UNI = "https://api.thegraph.com/subgraphs/name/ianlapham/uniswap-v3-polygon"
 GRAPH_SUSHI = "https://api.thegraph.com/subgraphs/name/sushiswap/v3-polygon"
-GECKO = "https://api.geckoterminal.com/api/v2/networks/polygon/tokens/"
 
 bot = Bot(TG_TOKEN)
 history = {s: deque(maxlen=600) for s in TOKENS}
-entries = {}  # sym: (entry_time, entry_price)
+entries = {}
 sem = asyncio.Semaphore(10)
 
 def ts(dt=None): return (dt or datetime.now(LONDON)).strftime("%H:%M")
@@ -87,120 +88,62 @@ async def price_dex(sess, addr):
         return price, platform, url
     except: return None, None, None
 
-async def price_1inch(sess, addr):
-    headers = {}
-    if ONEINCH_KEY:
-        headers["Authorization"] = f"Bearer {ONEINCH_KEY}"
-        url = f"https://api.1inch.dev/price/v1.1/137/{addr}"
-    else:
-        url = f"https://api.1inch.io/price/v1.1/137/{addr}"
-    try:
-        async with sess.get(url, headers=headers, timeout=8) as r:
-            if r.status != 200: return None, None
-            js = await r.json()
-            return float(js["price"]), "1inch"
-    except: return None, None
-
-async def price_gecko(sess, addr):
-    try:
-        js = await (await sess.get(GECKO + addr, timeout=8)).json()
-        if js and "data" in js:
-            return float(js["data"]["attributes"]["price_usd"]), "GeckoTerminal"
-    except: pass
-    return None, None
-
 async def best_price(sess, sym, addr):
-    tasks = [
-        price_dex(sess, addr),
-        price_uniswap(sess, sym),
-        price_sushi(sess, sym),
-        price_1inch(sess, addr)
-    ]
+    tasks = [price_dex(sess, addr), price_uniswap(sess, sym), price_sushi(sess, sym)]
     results = await asyncio.gather(*tasks)
     for res in results:
-        if res and res[0]:
-            return res
-    return await price_gecko(sess, addr) + (None,)
+        if res and res[0]: return res
+    return None, None, None
 
-# Мониторинг
+def check_volatility(prices):
+    return max(prices) / min(prices) - 1 >= 0.01 if len(prices) >= 2 else False
+
+def check_trend(prices):
+    return prices[-1] > prices[0] if len(prices) >= 2 else False
+
 async def monitor(sess, sym, addr):
     async with sem:
-        result = await best_price(sess, sym, addr)
-        if not result: return
-        price, source, url = result
+        price, source, url = await best_price(sess, sym, addr)
         if not price: return
 
         now = datetime.now(LONDON)
         history[sym].append((now, price))
 
-        # Отправка сообщения ENTRY ALERT
+        prices = [p for t, p in history[sym]]
+        lead = [p for t, p in history[sym] if now - t <= timedelta(minutes=LEAD_WINDOW)]
+        vol_window = [p for t, p in history[sym] if now - t <= timedelta(minutes=VOLATILITY_WINDOW)]
+        trend_window = [p for t, p in history[sym] if now - t <= timedelta(minutes=TREND_WINDOW)]
+
         if sym in entries:
             entry_time, _ = entries[sym]
             if now >= entry_time and entries[sym][1] is None:
                 entries[sym] = (entry_time, price)
-                msg = (
-f"🚀 *ENTRY ALERT*\n"
-f"{sym} → USDT\n"
-f"💰 Цена входа: {price:.4f}\n"
-f"📡 Источник: {source or '—'}\n"
-f"{'🔗 [Купить](' + url + ')' if url else ''}\n"
-f"🕒 {ts(now)}"
-)
-                await send(msg)
+                await send(f"🚀 *ENTRY ALERT*\n{sym} → USDT\n💰 Цена входа: {price:.4f}\n📡 Источник: {source or '—'}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
 
-        last = [p for t, p in history[sym] if now - t <= timedelta(minutes=LEAD_WINDOW)]
-        if len(last) >= 3:
-            speed = (price / min(last) - 1) * 100
+        if len(lead) >= 3:
+            speed = (price / min(lead) - 1) * 100
             proj = speed * (3 / LEAD_WINDOW)
             entry = now + timedelta(minutes=2)
             exit_ = entry + timedelta(minutes=3)
 
-            if speed >= PREDICT_THRESH and proj >= CONFIRM_THRESH and sym not in entries:
+            if (
+                speed >= PREDICT_THRESH and proj >= CONFIRM_THRESH and sym not in entries
+                and check_volatility(vol_window) and check_trend(trend_window)
+            ):
                 entries[sym] = (entry, None)
-                msg = (
-f"🔮 *PREDICTIVE ALERT*\n"
-f"💡 _Вход в сделку через 2 минуты_\n"
-f"{sym} → USDT\n"
-f"⏱ Вход: {ts(entry)} | Выход: {ts(exit_)}\n"
-f"📈 Прогноз: +{proj:.2f}%\n"
-f"📡 Источник: {source or '—'}\n"
-f"{'🔗 [Купить](' + url + ')' if url else ''}\n"
-f"🕒 {ts(now)}"
-)
-                await send(msg)
-
+                await send(f"🔮 *PREDICTIVE ALERT*\n💡 _Вход в сделку через 2 минуты_\n{sym} → USDT\n⏱ Вход: {ts(entry)} | Выход: {ts(exit_)}\n📈 Прогноз: +{proj:.2f}%\n📡 Источник: {source or '—'}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
             elif speed >= LEAD_THRESH:
-                msg = (
-f"📉 *EARLY LEAD ALERT*\n"
-f"⚠️ _Цена уже растёт. Можно входить, но без прогноза_\n"
-f"{sym} → USDT\n"
-f"📈 Рост: +{speed:.2f}% за {LEAD_WINDOW} мин\n"
-f"📡 Источник: {source or '—'}\n"
-f"{'🔗 [Купить](' + url + ')' if url else ''}\n"
-f"🕒 {ts(now)}"
-)
-                await send(msg)
+                await send(f"📉 *EARLY LEAD ALERT*\n⚠️ _Цена уже растёт. Можно входить, но без прогноза_\n{sym} → USDT\n📈 Рост: +{speed:.2f}% за {LEAD_WINDOW} мин\n📡 Источник: {source or '—'}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
 
-        # Подтверждение сделки
         if sym in entries:
             entry_time, entry_price = entries[sym]
             if entry_price and now >= entry_time + timedelta(minutes=3):
                 growth = (price / entry_price - 1) * 100
-                msg = (
-f"✅ *CONFIRMED ALERT*\n"
-f"📊 _Сделка завершена_\n"
-f"{sym} → USDT\n"
-f"📈 Результат: {'+' if growth >= 0 else ''}{growth:.2f}% за 3м\n"
-f"📡 Источник: {source or '—'}\n"
-f"{'🔗 [Купить](' + url + ')' if url else ''}\n"
-f"🕒 {ts(now)}"
-)
-                await send(msg)
+                await send(f"✅ *CONFIRMED ALERT*\n📊 _Сделка завершена_\n{sym} → USDT\n📈 Результат: {'+' if growth >= 0 else ''}{growth:.2f}% за 3м\n📡 Источник: {source or '—'}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
                 del entries[sym]
 
-# Главный цикл
 async def main():
-    await send("✅ Crypto Bot запущен и следит за рынком...")
+    await send("✅ Crypto Bot обновлён: улучшены фильтры прогноза и волатильности.")
     async with aiohttp.ClientSession() as sess:
         while True:
             await asyncio.gather(*(monitor(sess, sym, addr) for sym, addr in TOKENS.items()))
