@@ -9,7 +9,7 @@ from telegram import Bot
 import pytz
 import traceback
 from web3 import Web3
-from eth_abi.abi import decode_abi  # исправленный импорт
+from eth_abi import decode_abi  # исправленный импорт
 from sklearn.linear_model import LogisticRegression
 import numpy as np
 
@@ -44,8 +44,11 @@ TOKENS = {
 
 DEX_URL = "https://api.dexscreener.com/latest/dex/tokens/"
 
-# Разрешённые DEX для фильтрации
-ALLOWED_DEX = {"uniswap-v2", "uniswap-v3", "sushiswap", "oneinch"}
+PLATFORMS = {
+    "sushiswap": "https://sushi.com",
+    "uniswap": "https://app.uniswap.org/",
+    "1inch": "https://1inch.io"
+}
 
 bot = Bot(TG_TOKEN)
 history = {s: deque(maxlen=600) for s in TOKENS}
@@ -63,17 +66,6 @@ def log(msg: str):
 async def send(msg): 
     await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
     log(msg.replace("\n", " | "))
-
-def build_dex_link(dex_id, token_addr):
-    token_addr = token_addr.lower()
-    if dex_id.startswith("uniswap"):
-        return f"https://app.uniswap.org/#/swap?outputCurrency={token_addr}"
-    elif dex_id == "sushiswap":
-        return f"https://app.sushi.com/swap?outputCurrency={token_addr}"
-    elif dex_id == "oneinch":
-        return f"https://app.1inch.io/#/r/ETH/{token_addr}"
-    else:
-        return None
 
 # === Утилиты ML ===
 def load_historical_data(filename="historical_trades.csv"):
@@ -119,15 +111,12 @@ async def best_price(sess, sym, addr):
     try:
         async with sess.get(DEX_URL + addr) as r:
             data = await r.json()
-            # Фильтруем пары по разрешённым DEX
-            pairs = [p for p in data["pairs"] if p["dexId"] in ALLOWED_DEX]
-            if not pairs:
-                return None
-            d = pairs[0]
+            d = data["pairs"][0]
             price = float(d["priceUsd"])
-            dex_id = d["dexId"]
-            url = build_dex_link(dex_id, addr)
-            return price, dex_id, url
+            source = d.get("dexId", "").lower()
+            url = d.get("url", "")
+            platform_url = PLATFORMS.get(source, "")
+            return price, source, url or platform_url
     except Exception as e:
         log(f"[PRICE] {sym}: {e}")
         return None
@@ -137,8 +126,7 @@ async def monitor(sess, sym, addr):
     async with sem:
         try:
             res = await best_price(sess, sym, addr)
-            if not res: 
-                return
+            if not res: return
             price, source, url = res
 
             now = datetime.now(LONDON)
@@ -165,7 +153,16 @@ async def monitor(sess, sym, addr):
                     check_trend(trend_window) and confidence >= CONFIDENCE_THRESH and ml_pred == 1
                 ):
                     entries[sym] = (entry, None)
-                    await send(f"🔮 *PREDICTIVE ALERT*\n💡 _Ожидается рост_\n{sym} → USDT\n⏱ Вход: {ts(entry)} | Выход: {ts(exit_)}\n📈 Прогноз: +{proj:.2f}%\n📡 Источник: {source}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
+                    await send(
+                        f"🔮 *PREDICTIVE ALERT*\n"
+                        f"💡 _Ожидается рост_\n"
+                        f"{sym} → USDT\n"
+                        f"⏱ Вход: {ts(entry)} | Выход: {ts(exit_)}\n"
+                        f"📈 Прогноз: +{proj:.2f}%\n"
+                        f"📡 Источник: {source}\n"
+                        f"🔗 [Платформа]({url})\n"
+                        f"🕒 {ts(now)}"
+                    )
 
             if sym in entries:
                 entry_time, entry_price = entries[sym]
@@ -173,7 +170,15 @@ async def monitor(sess, sym, addr):
                     entries[sym] = (entry_time, price)
                 elif entry_price and now >= entry_time + timedelta(minutes=3):
                     growth = (price / entry_price - 1) * 100
-                    await send(f"✅ *CONFIRMED ALERT*\n📊 _Сделка завершена_\n{sym} → USDT\n📈 Результат: {'+' if growth >= 0 else ''}{growth:.2f}% за 3м\n📡 Источник: {source}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
+                    await send(
+                        f"✅ *CONFIRMED ALERT*\n"
+                        f"📊 _Сделка завершена_\n"
+                        f"{sym} → USDT\n"
+                        f"📈 Результат: {'+' if growth >= 0 else ''}{growth:.2f}% за 3м\n"
+                        f"📡 Источник: {source}\n"
+                        f"🔗 [Платформа]({url})\n"
+                        f"🕒 {ts(now)}"
+                    )
                     del entries[sym]
 
         except Exception as e:
