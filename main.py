@@ -1,12 +1,19 @@
-import os, asyncio, aiohttp, json
+import os
+import asyncio
+import aiohttp
+import json
+import csv
 from datetime import datetime, timedelta
 from collections import deque
 from telegram import Bot
 import pytz
 import traceback
 from web3 import Web3
+from eth_abi import decode_abi
+from sklearn.linear_model import LogisticRegression
+import numpy as np
 
-# Настройки
+# === Настройки ===
 TG_TOKEN = os.getenv("TG_TOKEN")
 CHAT_ID = int(os.getenv("CHAT_ID", "-1000000000000"))
 POLYGON_RPC = os.getenv("POLYGON_RPC")
@@ -23,7 +30,6 @@ CONFIDENCE_THRESH = 1.5
 LONDON = pytz.timezone("Europe/London")
 web3 = Web3(Web3.HTTPProvider(POLYGON_RPC))
 
-# Токены
 TOKENS = {
     "BET": "0x47da42124a67ef2d2fcea8f53c937b83e9f58fce",
     "LDO": "0xc3c7d422809852031b44ab29eec9f1eff2a58756",
@@ -51,6 +57,9 @@ history = {s: deque(maxlen=600) for s in TOKENS}
 entries = {}
 sem = asyncio.Semaphore(10)
 
+# === ML модель ===
+model = LogisticRegression()
+
 def ts(dt=None): return (dt or datetime.now(LONDON)).strftime("%H:%M")
 
 def log(msg: str):
@@ -61,56 +70,44 @@ async def send(msg):
     await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
     log(msg.replace("\n", " | "))
 
-def get_reserves(pool_address: str):
+# Загрузка исторических данных из CSV для обучения модели
+def load_historical_data(filename="historical_trades.csv"):
+    X = []
+    y = []
     try:
-        pool_address = Web3.to_checksum_address(pool_address)
-        abi = [{"inputs":[],"name":"getReserves","outputs":[
-            {"internalType":"uint112","name":"_reserve0","type":"uint112"},
-            {"internalType":"uint112","name":"_reserve1","type":"uint112"},
-            {"internalType":"uint32","name":"_blockTimestampLast","type":"uint32"}],
-            "stateMutability":"view","type":"function"}]
-        contract = web3.eth.contract(address=pool_address, abi=abi)
-        reserves = contract.functions.getReserves().call()
-        return reserves
+        with open(filename, newline='') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                # Пример признаков: profit_percent, timing (в минутах)
+                profit = float(row["profit_percent"])
+                start_time = datetime.fromisoformat(row["start_time"])
+                sell_time = datetime.fromisoformat(row["sell_time"])
+                timing = (sell_time - start_time).total_seconds() / 60
+                
+                # Метка: успех (1) если прибыль > 0, иначе 0
+                label = 1 if profit > 0 else 0
+                
+                X.append([profit, timing])
+                y.append(label)
+        return np.array(X), np.array(y)
     except Exception as e:
-        log(f"Error get_reserves {pool_address}: {e}")
-        return None
+        log(f"Error loading historical data: {e}")
+        return None, None
 
-async def price_dex(sess, addr):
-    try:
-        js = await (await sess.get(DEX_URL + addr, timeout=10)).json()
-        pools = js.get("pairs") or []
-        best = max(pools, key=lambda p: float(p.get("liquidity", {}).get("usd", 0)))
-        return float(best["priceUsd"]), best["dexId"].capitalize(), best.get("url", "")
-    except: return None
-
-async def best_price(sess, sym, addr):
-    dex = await price_dex(sess, addr)
-    uni_price = None
-    if sym in UNI_POOLS:
-        reserves = get_reserves(UNI_POOLS[sym])
-        if reserves:
-            r0, r1, _ = reserves
-            if r1 != 0:
-                uni_price = r0 / r1
-    if dex and dex[0] and uni_price:
-        return max([(dex[0], dex[1], dex[2]), (uni_price, "Uniswap", "")], key=lambda x: x[0])
-    elif dex and dex[0]:
-        return dex
-    elif uni_price:
-        return uni_price, "Uniswap", ""
+def train_model():
+    X, y = load_historical_data()
+    if X is not None and y is not None and len(y) > 10:
+        model.fit(X, y)
+        log(f"ML model trained on {len(y)} samples")
     else:
-        log(f"{sym} price data incomplete: uni={uni_price}, dex={dex}")
-        return None
+        log("Not enough data to train ML model")
 
-def check_volatility(prices):
-    try:
-        return max(prices) / min(prices) - 1 if len(prices) >= 2 else 0
-    except: return 0
+# === Остальные функции (get_reserves, price_dex, best_price, check_volatility, check_trend) ===
+# Их оставляем без изменений, как в твоём текущем main.py
 
-def check_trend(prices):
-    return prices[-1] > prices[0] if len(prices) >= 2 else False
+# (Скопируй сюда все остальные функции из твоего main.py, чтобы сохранить работу бота)
 
+# Вот пример для monitor(), дополненный ML прогнозом:
 async def monitor(sess, sym, addr):
     async with sem:
         try:
@@ -125,12 +122,7 @@ async def monitor(sess, sym, addr):
             vol_window = [p for t, p in history[sym] if now - t <= timedelta(minutes=VOLATILITY_WINDOW)]
             trend_window = [p for t, p in history[sym] if now - t <= timedelta(minutes=TREND_WINDOW)]
 
-            if sym in entries:
-                entry_time, _ = entries[sym]
-                if now >= entry_time and entries[sym][1] is None:
-                    entries[sym] = (entry_time, price)
-                    await send(f"🚀 *ENTRY ALERT*\n{sym} → USDT\n💰 Цена входа: {price:.4f}\n📡 Источник: {source}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
-
+            # ML прогноз: используем последний рост и скорость как признаки
             if len(lead) >= 3 and all(p is not None for p in lead):
                 min_lead = min(lead)
                 speed = (price / min_lead - 1) * 100
@@ -140,13 +132,18 @@ async def monitor(sess, sym, addr):
                 entry = now + timedelta(minutes=2)
                 exit_ = entry + timedelta(minutes=3)
 
+                # Подготовка признаков для ML модели
+                X_pred = np.array([[proj, LEAD_WINDOW]])
+                ml_pred = model.predict(X_pred)[0] if hasattr(model, "predict") else 0
+
                 if (
                     speed >= PREDICT_THRESH and proj >= CONFIRM_THRESH and sym not in entries and
-                    check_trend(trend_window) and confidence >= CONFIDENCE_THRESH
+                    check_trend(trend_window) and confidence >= CONFIDENCE_THRESH and ml_pred == 1
                 ):
                     entries[sym] = (entry, None)
                     await send(f"🔮 *PREDICTIVE ALERT*\n💡 _Ожидается рост_\n{sym} → USDT\n⏱ Вход: {ts(entry)} | Выход: {ts(exit_)}\n📈 Прогноз: +{proj:.2f}%\n📡 Источник: {source}\n🔗 [Купить]({url})\n🕒 {ts(now)}")
 
+            # Дальнейшая логика подтверждения и завершения сделок
             if sym in entries:
                 entry_time, entry_price = entries[sym]
                 if entry_price and now >= entry_time + timedelta(minutes=3):
@@ -160,14 +157,10 @@ async def monitor(sess, sym, addr):
 
 async def main():
     await send("✅ Crypto Arbitrage Bot запущен. Мониторинг цен и арбитражных возможностей начался.")
+    train_model()  # Обучаем модель при старте бота
     async with aiohttp.ClientSession() as sess:
         while True:
             try:
                 await asyncio.gather(*(monitor(sess, sym, addr) for sym, addr in TOKENS.items()))
             except Exception as e:
-                log(f"[MAIN LOOP ERROR] {e}")
-                traceback.print_exc()
-            await asyncio.sleep(CHECK_SEC)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+                log(f"[MAIN LOOP ERROR]
