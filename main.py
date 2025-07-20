@@ -5,7 +5,6 @@ from telegram import Bot
 import pytz
 import traceback
 from web3 import Web3
-from eth_abi import decode_abi
 
 # Настройки
 TG_TOKEN = os.getenv("TG_TOKEN")
