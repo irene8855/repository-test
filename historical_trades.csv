@@ -1,0 +1,5 @@
+start_time,sell_time,symbol,profit_percent,platform,result
+2025-06-25T15:49:00,2025-06-25T15:53:00,FRAX,1.92,sushi,success
+2025-07-25T09:22:00,2025-07-25T09:25:00,EMT,1.78,sushi,success
+2025-07-25T16:58:00,2025-07-25T17:03:00,AAVE,-1.04,uniswap,failure
+...
