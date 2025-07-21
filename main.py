@@ -26,8 +26,14 @@ def log(msg: str):
 
 # === Настройки ===
 TG_TOKEN = os.getenv("TG_TOKEN")
+if not TG_TOKEN:
+    log("[ERROR] Не найден TG_TOKEN в окружении")
+    sys.exit(1)
 CHAT_ID = int(os.getenv("CHAT_ID", "-1000000000000"))
 POLYGON_RPC = os.getenv("POLYGON_RPC")
+if not POLYGON_RPC:
+    log("[ERROR] Не найден POLYGON_RPC в окружении")
+    sys.exit(1)
 
 CHECK_SEC = 15
 LEAD_WINDOW = 2
@@ -41,8 +47,8 @@ CONFIDENCE_THRESH = 1.3
 LONDON = pytz.timezone("Europe/London")
 web3 = Web3(Web3.HTTPProvider(POLYGON_RPC))
 
+# Убрали BET, добавили новые токены
 TOKENS = {
-    "BET": "0x47da42124a67ef2d2fcea8f53c937b83e9f58fce",
     "LDO": "0xc3c7d422809852031b44ab29eec9f1eff2a58756",
     "SAND": "0xbbba073c31bf03b8acf7c28ef0738decf3695683",
     "GMT": "0xe3c408bd53c31c085a1746af401a4042954ff740",
@@ -50,7 +56,10 @@ TOKENS = {
     "LINK": "0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39",
     "SUSHI": "0x0b3f868e0be5597d5db7feb59e1cadbb0fdda50a",
     "wstETH": "0x7ceb23fd6bc0add59e62ac25578270cff1b9f619",
-    "AAVE": "0xd6df932a45c0f255f85145f286ea0b292b21c90b"
+    "AAVE": "0xd6df932a45c0f255f85145f286ea0b292b21c90b",
+    "MATIC": "0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0",
+    "UNI": "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
+    "MKR": "0x9f8f72aa9304c8b593d555f12ef6589cc3a579a2"
 }
 
 DEX_URL = "https://api.dexscreener.com/latest/dex/tokens/"
@@ -173,6 +182,8 @@ async def monitor(sess, sym, addr):
                     ml_pred = model.predict(X_pred)[0]
                 except NotFittedError:
                     ml_pred = 0
+
+                log(f"[PREDICT] {sym}: speed={speed:.2f}%, proj={proj:.2f}%, confidence={confidence:.2f}, ml_pred={ml_pred}")
 
                 if (
                     speed >= PREDICT_THRESH and proj >= CONFIRM_THRESH and sym not in entries and
