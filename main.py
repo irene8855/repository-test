@@ -10,6 +10,7 @@ import pytz
 import traceback
 from web3 import Web3
 from sklearn.linear_model import LogisticRegression
+from sklearn.exceptions import NotFittedError
 import numpy as np
 
 # === Настройки ===
@@ -142,7 +143,11 @@ async def monitor(sess, sym, addr):
                 exit_ = entry + timedelta(minutes=3)
 
                 X_pred = np.array([[proj, LEAD_WINDOW]])
-                ml_pred = model.predict(X_pred)[0] if hasattr(model, "predict") else 0
+                
+                try:
+                    ml_pred = model.predict(X_pred)[0]
+                except NotFittedError:
+                    ml_pred = 0
 
                 if (
                     speed >= PREDICT_THRESH and proj >= CONFIRM_THRESH and sym not in entries and
