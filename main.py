@@ -123,7 +123,8 @@ async def monitor(sess, sym, addr):
     async with sem:
         try:
             res = await best_price(sess, sym, addr)
-            if not res: return
+            if not res: 
+                return
             price, source, url = res
 
             now = datetime.now(LONDON)
@@ -143,7 +144,6 @@ async def monitor(sess, sym, addr):
                 exit_ = entry + timedelta(minutes=3)
 
                 X_pred = np.array([[proj, LEAD_WINDOW]])
-                
                 try:
                     ml_pred = model.predict(X_pred)[0]
                 except NotFittedError:
@@ -173,8 +173,8 @@ async def monitor(sess, sym, addr):
 
 # === Основной цикл ===
 async def main():
-    await send("✅ Crypto Arbitrage Bot запущен. Мониторинг цен и арбитражных возможностей начался.")
     train_model()
+    await send("✅ Crypto Arbitrage Bot запущен. Мониторинг цен и арбитражных возможностей начался.")
     async with aiohttp.ClientSession() as sess:
         while True:
             try:
