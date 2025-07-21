@@ -1,7 +1,6 @@
 import os
 import asyncio
 import aiohttp
-import json
 import csv
 from datetime import datetime, timedelta
 from collections import deque
@@ -23,9 +22,10 @@ LEAD_WINDOW = 2
 VOLATILITY_WINDOW = 5
 TREND_WINDOW = 3
 
-PREDICT_THRESH = 1.2
-CONFIRM_THRESH = 2.0
-CONFIDENCE_THRESH = 1.5
+# 🔽 Обновлённые пороги
+PREDICT_THRESH = 1.0       # было 1.2
+CONFIRM_THRESH = 1.6       # было 2.0
+CONFIDENCE_THRESH = 1.3    # было 1.5
 
 LONDON = pytz.timezone("Europe/London")
 web3 = Web3(Web3.HTTPProvider(POLYGON_RPC))
@@ -54,7 +54,6 @@ bot = Bot(TG_TOKEN)
 history = {s: deque(maxlen=600) for s in TOKENS}
 entries = {}
 sem = asyncio.Semaphore(10)
-
 model = LogisticRegression()
 
 def ts(dt=None): 
@@ -69,8 +68,6 @@ async def send(msg):
         send_coroutine = bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
         if asyncio.iscoroutine(send_coroutine):
             await send_coroutine
-        else:
-            send_coroutine
     except Exception as e:
         log(f"[SEND ERROR] {e}")
     log(msg.replace("\n", " | "))
