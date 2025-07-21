@@ -1,4 +1,5 @@
 import os
+import sys
 import asyncio
 import aiohttp
 import csv
@@ -11,6 +12,17 @@ from web3 import Web3
 from sklearn.linear_model import LogisticRegression
 from sklearn.exceptions import NotFittedError
 import numpy as np
+import logging
+
+# === Логирование ===
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+
+def log(msg: str):
+    logging.info(msg)
 
 # === Настройки ===
 TG_TOKEN = os.getenv("TG_TOKEN")
@@ -22,7 +34,6 @@ LEAD_WINDOW = 2
 VOLATILITY_WINDOW = 5
 TREND_WINDOW = 3
 
-# 🔽 Обновлённые пороги
 PREDICT_THRESH = 1.0
 CONFIRM_THRESH = 1.6
 CONFIDENCE_THRESH = 1.3
@@ -59,10 +70,6 @@ model = LogisticRegression()
 def ts(dt=None):
     return (dt or datetime.now(LONDON)).strftime("%H:%M")
 
-def log(msg: str):
-    with open("logs.txt", "a") as f:
-        f.write(f"{datetime.now().isoformat()} {msg}\n")
-
 async def send(msg):
     try:
         send_coroutine = bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
@@ -72,7 +79,7 @@ async def send(msg):
         log(f"[SEND ERROR] {e}")
     log(msg.replace("\n", " | "))
 
-# === Утилиты ML ===
+# === Machine Learning ===
 def load_historical_data(filename="historical_trades.csv"):
     X = []
     y = []
@@ -108,7 +115,7 @@ def train_model():
     else:
         log("❌ Недостаточно данных для обучения ML модели")
 
-# === Метрики анализа цен ===
+# === Метрики ===
 def check_volatility(prices):
     if not prices or len(prices) < 2:
         return 0
@@ -119,32 +126,25 @@ def check_volatility(prices):
 def check_trend(prices):
     return all(x < y for x, y in zip(prices, prices[1:]))
 
-# === Получение данных о цене ===
+# === Получение цены ===
 async def best_price(sess, sym, addr):
     try:
         async with sess.get(DEX_URL + addr) as r:
             data = await r.json()
-
-            # Проверяем, что data — это словарь, и там есть "pairs"
             if not data or "pairs" not in data or not data["pairs"]:
                 log(f"[PRICE] {sym}: No pairs found in API response")
                 return None
-
             d = data["pairs"][0]
-
-            # Проверяем, что нужные ключи есть в ответе
             if "priceUsd" not in d or "dexId" not in d or "url" not in d:
                 log(f"[PRICE] {sym}: Missing expected keys in pair data")
                 return None
-
             price = float(d["priceUsd"])
             return price, d["dexId"], d["url"]
-
     except Exception as e:
         log(f"[PRICE] {sym}: {e}")
         return None
 
-# === Основной мониторинг токена ===
+# === Мониторинг ===
 async def monitor(sess, sym, addr):
     async with sem:
         try:
@@ -152,7 +152,6 @@ async def monitor(sess, sym, addr):
             if not res:
                 return
             price, source, url = res
-
             now = datetime.now(LONDON)
             history[sym].append((now, price))
 
@@ -181,7 +180,16 @@ async def monitor(sess, sym, addr):
                 ):
                     entries[sym] = (entry, None)
                     platform_link = DEX_LINKS.get(source.lower(), url)
-                    await send(f"🔮 *PREDICTIVE ALERT*\n💡 _Ожидается рост_\n{sym} → USDT\n⏱ Вход: {ts(entry)} | Выход: {ts(exit_)}\n📈 Прогноз: +{proj:.2f}%\n🌐 Платформа: [{source}]({platform_link})\n🔗 [Торговля]({url})\n🕒 {ts(now)}")
+                    await send(
+                        f"🔮 *PREDICTIVE ALERT*\n"
+                        f"💡 _Ожидается рост_\n"
+                        f"{sym} → USDT\n"
+                        f"⏱ Вход: {ts(entry)} | Выход: {ts(exit_)}\n"
+                        f"📈 Прогноз: +{proj:.2f}%\n"
+                        f"🌐 Платформа: [{source}]({platform_link})\n"
+                        f"🔗 [Торговля]({url})\n"
+                        f"🕒 {ts(now)}"
+                    )
 
             if sym in entries:
                 entry_time, entry_price = entries[sym]
@@ -190,14 +198,22 @@ async def monitor(sess, sym, addr):
                 elif entry_price and now >= entry_time + timedelta(minutes=3):
                     growth = (price / entry_price - 1) * 100
                     platform_link = DEX_LINKS.get(source.lower(), url)
-                    await send(f"✅ *CONFIRMED ALERT*\n📊 _Сделка завершена_\n{sym} → USDT\n📈 Результат: {'+' if growth >= 0 else ''}{growth:.2f}% за 3м\n🌐 Платформа: [{source}]({platform_link})\n🔗 [Торговля]({url})\n🕒 {ts(now)}")
+                    await send(
+                        f"✅ *CONFIRMED ALERT*\n"
+                        f"📊 _Сделка завершена_\n"
+                        f"{sym} → USDT\n"
+                        f"📈 Результат: {'+' if growth >= 0 else ''}{growth:.2f}% за 3м\n"
+                        f"🌐 Платформа: [{source}]({platform_link})\n"
+                        f"🔗 [Торговля]({url})\n"
+                        f"🕒 {ts(now)}"
+                    )
                     del entries[sym]
 
         except Exception as e:
             log(f"[MONITOR ERROR] {sym}: {e}")
-            traceback.print_exc()
+            log(traceback.format_exc())
 
-# === Основной цикл ===
+# === Главный цикл ===
 async def main():
     train_model()
     await send("✅ Crypto Arbitrage Bot запущен. Мониторинг цен и арбитражных возможностей начался.")
@@ -210,4 +226,9 @@ async def main():
             await asyncio.sleep(CHECK_SEC)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        log(f"[FATAL ERROR] {e}")
+        log(traceback.format_exc())
+        
