@@ -57,14 +57,22 @@ sem = asyncio.Semaphore(10)
 
 model = LogisticRegression()
 
-def ts(dt=None): return (dt or datetime.now(LONDON)).strftime("%H:%M")
+def ts(dt=None): 
+    return (dt or datetime.now(LONDON)).strftime("%H:%M")
 
 def log(msg: str):
     with open("logs.txt", "a") as f:
         f.write(f"{datetime.now().isoformat()} {msg}\n")
 
-async def send(msg): 
-    await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+async def send(msg):
+    try:
+        send_coroutine = bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        if asyncio.iscoroutine(send_coroutine):
+            await send_coroutine
+        else:
+            send_coroutine
+    except Exception as e:
+        log(f"[SEND ERROR] {e}")
     log(msg.replace("\n", " | "))
 
 # === Утилиты ML ===
