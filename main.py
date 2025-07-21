@@ -22,6 +22,7 @@ LEAD_WINDOW = 2
 VOLATILITY_WINDOW = 5
 TREND_WINDOW = 3
 
+# 🔽 Обновлённые пороги
 PREDICT_THRESH = 1.0
 CONFIRM_THRESH = 1.6
 CONFIDENCE_THRESH = 1.3
@@ -42,6 +43,7 @@ TOKENS = {
 }
 
 DEX_URL = "https://api.dexscreener.com/latest/dex/tokens/"
+
 DEX_LINKS = {
     "sushiswap": "https://sushi.com",
     "uniswap": "https://app.uniswap.org",
@@ -58,7 +60,8 @@ def ts(dt=None):
     return (dt or datetime.now(LONDON)).strftime("%H:%M")
 
 def log(msg: str):
-    print(f"{datetime.now().isoformat()} {msg}")
+    with open("logs.txt", "a") as f:
+        f.write(f"{datetime.now().isoformat()} {msg}\n")
 
 async def send(msg):
     try:
@@ -67,11 +70,12 @@ async def send(msg):
             await send_coroutine
     except Exception as e:
         log(f"[SEND ERROR] {e}")
-    log(f"[SEND] {msg.replace(chr(10), ' | ')}")
+    log(msg.replace("\n", " | "))
 
-# === ML ===
+# === Утилиты ML ===
 def load_historical_data(filename="historical_trades.csv"):
-    X, y = [], []
+    X = []
+    y = []
     try:
         with open(filename, newline='') as csvfile:
             reader = csv.DictReader(csvfile)
@@ -86,7 +90,7 @@ def load_historical_data(filename="historical_trades.csv"):
         log(f"📊 Загружено {len(y)} исторических сделок")
         return np.array(X), np.array(y)
     except Exception as e:
-        log(f"[LOAD ERROR] {e}")
+        log(f"[LOAD HISTORICAL ERROR] {e}")
         return None, None
 
 def train_model():
@@ -104,7 +108,7 @@ def train_model():
     else:
         log("❌ Недостаточно данных для обучения ML модели")
 
-# === Анализ рынка ===
+# === Метрики анализа цен ===
 def check_volatility(prices):
     if not prices or len(prices) < 2:
         return 0
@@ -115,17 +119,32 @@ def check_volatility(prices):
 def check_trend(prices):
     return all(x < y for x, y in zip(prices, prices[1:]))
 
+# === Получение данных о цене ===
 async def best_price(sess, sym, addr):
     try:
         async with sess.get(DEX_URL + addr) as r:
             data = await r.json()
+
+            # Проверяем, что data — это словарь, и там есть "pairs"
+            if not data or "pairs" not in data or not data["pairs"]:
+                log(f"[PRICE] {sym}: No pairs found in API response")
+                return None
+
             d = data["pairs"][0]
+
+            # Проверяем, что нужные ключи есть в ответе
+            if "priceUsd" not in d or "dexId" not in d or "url" not in d:
+                log(f"[PRICE] {sym}: Missing expected keys in pair data")
+                return None
+
             price = float(d["priceUsd"])
             return price, d["dexId"], d["url"]
+
     except Exception as e:
         log(f"[PRICE] {sym}: {e}")
         return None
 
+# === Основной мониторинг токена ===
 async def monitor(sess, sym, addr):
     async with sem:
         try:
@@ -133,6 +152,7 @@ async def monitor(sess, sym, addr):
             if not res:
                 return
             price, source, url = res
+
             now = datetime.now(LONDON)
             history[sym].append((now, price))
 
@@ -140,7 +160,7 @@ async def monitor(sess, sym, addr):
             vol_window = [p for t, p in history[sym] if now - t <= timedelta(minutes=VOLATILITY_WINDOW)]
             trend_window = [p for t, p in history[sym] if now - t <= timedelta(minutes=TREND_WINDOW)]
 
-            if len(lead) >= 3:
+            if len(lead) >= 3 and all(p is not None for p in lead):
                 min_lead = min(lead)
                 speed = (price / min_lead - 1) * 100
                 volatility = check_volatility(vol_window)
@@ -177,6 +197,7 @@ async def monitor(sess, sym, addr):
             log(f"[MONITOR ERROR] {sym}: {e}")
             traceback.print_exc()
 
+# === Основной цикл ===
 async def main():
     train_model()
     await send("✅ Crypto Arbitrage Bot запущен. Мониторинг цен и арбитражных возможностей начался.")
