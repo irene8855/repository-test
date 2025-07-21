@@ -22,7 +22,6 @@ LEAD_WINDOW = 2
 VOLATILITY_WINDOW = 5
 TREND_WINDOW = 3
 
-# 🔽 Обновлённые пороги
 PREDICT_THRESH = 1.0
 CONFIRM_THRESH = 1.6
 CONFIDENCE_THRESH = 1.3
@@ -43,7 +42,6 @@ TOKENS = {
 }
 
 DEX_URL = "https://api.dexscreener.com/latest/dex/tokens/"
-
 DEX_LINKS = {
     "sushiswap": "https://sushi.com",
     "uniswap": "https://app.uniswap.org",
@@ -60,8 +58,7 @@ def ts(dt=None):
     return (dt or datetime.now(LONDON)).strftime("%H:%M")
 
 def log(msg: str):
-    with open("logs.txt", "a") as f:
-        f.write(f"{datetime.now().isoformat()} {msg}\n")
+    print(f"{datetime.now().isoformat()} {msg}")
 
 async def send(msg):
     try:
@@ -70,12 +67,11 @@ async def send(msg):
             await send_coroutine
     except Exception as e:
         log(f"[SEND ERROR] {e}")
-    log(msg.replace("\n", " | "))
+    log(f"[SEND] {msg.replace(chr(10), ' | ')}")
 
-# === Утилиты ML ===
+# === ML ===
 def load_historical_data(filename="historical_trades.csv"):
-    X = []
-    y = []
+    X, y = [], []
     try:
         with open(filename, newline='') as csvfile:
             reader = csv.DictReader(csvfile)
@@ -87,9 +83,10 @@ def load_historical_data(filename="historical_trades.csv"):
                 label = 1 if profit > 0 else 0
                 X.append([profit, timing])
                 y.append(label)
+        log(f"📊 Загружено {len(y)} исторических сделок")
         return np.array(X), np.array(y)
     except Exception as e:
-        log(f"[LOAD HISTORICAL ERROR] {e}")
+        log(f"[LOAD ERROR] {e}")
         return None, None
 
 def train_model():
@@ -98,16 +95,16 @@ def train_model():
         try:
             model.fit(X, y)
             acc = model.score(X, y)
-            log(f"✅ ML model trained on {len(y)} samples")
-            log(f"   ➤ Accuracy on train: {acc:.2f}")
-            log(f"   ➤ Coefficients: {model.coef_.tolist()}")
-            log(f"   ➤ Intercept: {model.intercept_.tolist()}")
+            log(f"✅ ML модель обучена на {len(y)} сделках")
+            log(f"   ➤ Точность: {acc:.2f}")
+            log(f"   ➤ Коэффициенты: {model.coef_.tolist()}")
+            log(f"   ➤ Смещение: {model.intercept_.tolist()}")
         except Exception as e:
             log(f"[TRAIN ERROR] {e}")
     else:
-        log("❌ Not enough data to train ML model")
+        log("❌ Недостаточно данных для обучения ML модели")
 
-# === Метрики анализа цен ===
+# === Анализ рынка ===
 def check_volatility(prices):
     if not prices or len(prices) < 2:
         return 0
@@ -118,7 +115,6 @@ def check_volatility(prices):
 def check_trend(prices):
     return all(x < y for x, y in zip(prices, prices[1:]))
 
-# === Получение данных о цене ===
 async def best_price(sess, sym, addr):
     try:
         async with sess.get(DEX_URL + addr) as r:
@@ -130,7 +126,6 @@ async def best_price(sess, sym, addr):
         log(f"[PRICE] {sym}: {e}")
         return None
 
-# === Основной мониторинг токена ===
 async def monitor(sess, sym, addr):
     async with sem:
         try:
@@ -138,7 +133,6 @@ async def monitor(sess, sym, addr):
             if not res:
                 return
             price, source, url = res
-
             now = datetime.now(LONDON)
             history[sym].append((now, price))
 
@@ -146,7 +140,7 @@ async def monitor(sess, sym, addr):
             vol_window = [p for t, p in history[sym] if now - t <= timedelta(minutes=VOLATILITY_WINDOW)]
             trend_window = [p for t, p in history[sym] if now - t <= timedelta(minutes=TREND_WINDOW)]
 
-            if len(lead) >= 3 and all(p is not None for p in lead):
+            if len(lead) >= 3:
                 min_lead = min(lead)
                 speed = (price / min_lead - 1) * 100
                 volatility = check_volatility(vol_window)
@@ -183,7 +177,6 @@ async def monitor(sess, sym, addr):
             log(f"[MONITOR ERROR] {sym}: {e}")
             traceback.print_exc()
 
-# === Основной цикл ===
 async def main():
     train_model()
     await send("✅ Crypto Arbitrage Bot запущен. Мониторинг цен и арбитражных возможностей начался.")
