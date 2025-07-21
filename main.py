@@ -23,9 +23,9 @@ VOLATILITY_WINDOW = 5
 TREND_WINDOW = 3
 
 # 🔽 Обновлённые пороги
-PREDICT_THRESH = 1.0       # было 1.2
-CONFIRM_THRESH = 1.6       # было 2.0
-CONFIDENCE_THRESH = 1.3    # было 1.5
+PREDICT_THRESH = 1.0
+CONFIRM_THRESH = 1.6
+CONFIDENCE_THRESH = 1.3
 
 LONDON = pytz.timezone("Europe/London")
 web3 = Web3(Web3.HTTPProvider(POLYGON_RPC))
@@ -56,7 +56,7 @@ entries = {}
 sem = asyncio.Semaphore(10)
 model = LogisticRegression()
 
-def ts(dt=None): 
+def ts(dt=None):
     return (dt or datetime.now(LONDON)).strftime("%H:%M")
 
 def log(msg: str):
@@ -89,16 +89,23 @@ def load_historical_data(filename="historical_trades.csv"):
                 y.append(label)
         return np.array(X), np.array(y)
     except Exception as e:
-        log(f"Error loading historical data: {e}")
+        log(f"[LOAD HISTORICAL ERROR] {e}")
         return None, None
 
 def train_model():
     X, y = load_historical_data()
     if X is not None and y is not None and len(y) > 10:
-        model.fit(X, y)
-        log(f"ML model trained on {len(y)} samples")
+        try:
+            model.fit(X, y)
+            acc = model.score(X, y)
+            log(f"✅ ML model trained on {len(y)} samples")
+            log(f"   ➤ Accuracy on train: {acc:.2f}")
+            log(f"   ➤ Coefficients: {model.coef_.tolist()}")
+            log(f"   ➤ Intercept: {model.intercept_.tolist()}")
+        except Exception as e:
+            log(f"[TRAIN ERROR] {e}")
     else:
-        log("Not enough data to train ML model")
+        log("❌ Not enough data to train ML model")
 
 # === Метрики анализа цен ===
 def check_volatility(prices):
@@ -128,7 +135,7 @@ async def monitor(sess, sym, addr):
     async with sem:
         try:
             res = await best_price(sess, sym, addr)
-            if not res: 
+            if not res:
                 return
             price, source, url = res
 
