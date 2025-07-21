@@ -1,4 +1,12 @@
-app = "repository-test-updated"
+app = "repository-trade-bot"  # можно изменить на любое уникальное имя
+
+primary_region = "lon"  # Лондон
 
 [env]
   PYTHONUNBUFFERED = "true"
+
+[experimental]
+  auto_rollback = true
+
+[deploy]
+  strategy = "immediate"
