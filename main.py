@@ -8,11 +8,13 @@ from sklearn.ensemble import RandomForestRegressor
 from web3 import Web3
 from dotenv import load_dotenv
 
+# Загрузка секретов
 load_dotenv()
 POLYGON_RPC = os.getenv("POLYGON_RPC")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# Web3 и платформы
 web3 = Web3(Web3.HTTPProvider(POLYGON_RPC))
 
 ROUTERS = {
@@ -30,6 +32,7 @@ ROUTERS = {
     }
 }
 
+# Адреса токенов (Polygon)
 TOKENS = {
     "USDT": Web3.to_checksum_address("0xc2132D05D31c914a87C6611C10748AaCbA6cD43E"),
     "FRAX": Web3.to_checksum_address("0x45c32fa6df82ead1e2ef74d17b76547eddfaff89"),
@@ -43,14 +46,16 @@ TOKENS = {
     "EMT": Web3.to_checksum_address("0x6bE7E4A2202cB6E60ef3F94d27a65b906FdA7D86")
 }
 
+# Telegram send
 def send_telegram(msg: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
     try:
         requests.post(url, data=data)
-    except:
-        pass
+    except Exception as e:
+        print(f"Telegram send error: {e}")
 
+# Реальный вызов getAmountsOut через контракт
 def get_real_price(token_in, token_out):
     try:
         router = ROUTERS["Uniswap"]["router_address"]
@@ -61,11 +66,15 @@ def get_real_price(token_in, token_out):
     except:
         return None
 
+# Предсказание по модели
 def predict_best(df, model):
     options = []
     for pair in df["pair"].unique():
-        timing = df[df["pair"] == pair]["timing"].mean()
-        platform = df[df["pair"] == pair]["platform"].mode()[0]
+        subset = df[df["pair"] == pair]
+        if subset.empty:
+            continue
+        timing = subset["timing"].mean()
+        platform = subset["platform"].mode()[0]
         tokens = pair.split("->")
         if len(tokens) == 3:
             token1 = tokens[1]
@@ -84,6 +93,7 @@ def predict_best(df, model):
         return max(options, key=lambda x: x["pred"])
     return None
 
+# Confirm результат
 def confirm_trade(pair):
     tokens = pair.split("->")
     if len(tokens) == 3 and tokens[1] in TOKENS:
@@ -91,17 +101,23 @@ def confirm_trade(pair):
         return profit
     return None
 
+# Обучение модели
 def train_model(historical_path="historical.csv"):
-    df = pd.read_csv(historical_path)
-    df.columns = [c.strip() for c in df.columns]  # 🔥 удалим пробелы
-    expected = {"timing", "profit_low", "profit_high", "pair", "platform"}
-    if not expected.issubset(df.columns):
-        raise ValueError(f"Historical data missing columns: {expected - set(df.columns)}")
-    df = df.dropna()
-    model = RandomForestRegressor(n_estimators=100, random_state=42)
-    model.fit(df[["timing", "profit_low"]], df["profit_high"])
-    return model, df
+    try:
+        df = pd.read_csv(historical_path, encoding='utf-8-sig')
+        df.columns = [col.strip() for col in df.columns]
+        required_cols = {"pair", "timing", "profit_low", "profit_high", "platform"}
+        if not required_cols.issubset(df.columns):
+            raise ValueError(f"Historical data missing columns: {required_cols - set(df.columns)}")
+        df = df.dropna()
+        model = RandomForestRegressor(n_estimators=100, random_state=42)
+        model.fit(df[["timing", "profit_low"]], df["profit_high"])
+        return model, df
+    except Exception as e:
+        send_telegram(f"❌ Ошибка загрузки модели: {e}")
+        raise
 
+# Прямой URL
 def build_url(platform_name, token_symbol):
     token_addr = TOKENS[token_symbol]
     if platform_name == "1inch":
@@ -111,42 +127,38 @@ def build_url(platform_name, token_symbol):
     else:
         return ROUTERS["Uniswap"]["url"].format("USDT", token_addr)
 
+# Основной запуск
 if __name__ == "__main__":
-    notified = False
     try:
         model, df = train_model()
-    except Exception as e:
-        send_telegram(f"❌ Ошибка загрузки модели: {e}")
-        exit()
-
-    if not notified:
         send_telegram("🤖 Бот запущен и работает на реальных данных.")
-        notified = True
 
-    while True:
-        now = datetime.datetime.now()
-        best = predict_best(df, model)
+        while True:
+            now = datetime.datetime.now()
+            best = predict_best(df, model)
 
-        if best:
-            start = now.strftime("%H:%M")
-            end = (now + datetime.timedelta(minutes=int(best["timing"]))).strftime("%H:%M")
-            url = build_url(best["platform"], best["pair"].split("->")[1])
-            send_telegram(
-                f"📉{best['pair']}📈\n"
-                f"TIMING: {int(best['timing'])} MIN⌛️\n"
-                f"TIME FOR START: {start}\n"
-                f"TIME FOR SELL: {end}\n"
-                f"PROFIT: {round(best['pred'], 2)} 💸\n"
-                f"PLATFORM: {best['platform']}\n"
-                f"🔗 {url}"
-            )
-            time.sleep(int(best["timing"]) * 60)
-
-            real_profit = confirm_trade(best["pair"])
-            if real_profit is not None:
+            if best:
+                start = now.strftime("%H:%M")
+                end = (now + datetime.timedelta(minutes=int(best["timing"]))).strftime("%H:%M")
+                url = build_url(best["platform"], best["pair"].split("->")[1])
                 send_telegram(
-                    f"✅ CONFIRMED: {best['pair']}\n"
-                    f"REAL PROFIT: {round(real_profit, 2)} 💰"
+                    f"📉{best['pair']}📈\n"
+                    f"TIMING: {int(best['timing'])} MIN⌛️\n"
+                    f"TIME FOR START: {start}\n"
+                    f"TIME FOR SELL: {end}\n"
+                    f"PROFIT: {round(best['pred'], 2)} 💸\n"
+                    f"PLATFORM: {best['platform']}\n"
+                    f"🔗 {url}"
                 )
-        time.sleep(60)
+                time.sleep(int(best["timing"]) * 60)
+
+                real_profit = confirm_trade(best["pair"])
+                if real_profit is not None:
+                    send_telegram(
+                        f"✅ CONFIRMED: {best['pair']}\n"
+                        f"REAL PROFIT: {round(real_profit, 2)} 💰"
+                    )
+            time.sleep(60)
+    except Exception as e:
+        print(f"Fatal error: {e}")
         
