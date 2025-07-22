@@ -29,7 +29,6 @@ ROUTERS = {
     "1inch": {
         "url": "https://app.1inch.io/#/137/swap/{}-{}/USDT",
         "api_url": "https://api.1inch.dev/swap/v5.2/137/quote",
-        "router_address": Web3.to_checksum_address("0x1111111254EEB25477B68fb85Ed929f73A960582"),
     }
 }
 
@@ -56,16 +55,15 @@ def send_telegram(msg: str):
     except Exception as e:
         print(f"Telegram send error: {e}")
 
-# Реальный вызов getAmountsOut через контракт с поддержкой платформ
-def get_real_price(token_in, token_out, platform_name="Uniswap"):
+# Реальный вызов getAmountsOut через контракт
+def get_real_price(token_in, token_out):
     try:
-        router = ROUTERS.get(platform_name, ROUTERS["Uniswap"])["router_address"]
+        router = ROUTERS["Uniswap"]["router_address"]
         abi = '[{"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"}],"name":"getAmountsOut","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"}]'
         contract = web3.eth.contract(address=router, abi=abi)
-        result = contract.functions.getAmountsOut(10**6, [token_in, token_out]).call()
+        result = contract.functions.getAmountsOut(10**6, [token_in, token_out, token_in]).call()
         return (result[-1] / 1e6 - 1) * 100
-    except Exception as e:
-        print(f"Error in get_real_price for {platform_name}: {e}")
+    except:
         return None
 
 # Предсказание по модели
@@ -81,7 +79,7 @@ def predict_best(df, model):
         if len(tokens) == 3:
             token1 = tokens[1]
             if token1 in TOKENS:
-                price = get_real_price(TOKENS["USDT"], TOKENS[token1], platform)
+                price = get_real_price(TOKENS["USDT"], TOKENS[token1])
                 if price is not None:
                     X = pd.DataFrame([[timing, price]], columns=["timing", "profit_low"])
                     pred = model.predict(X)[0]
@@ -179,4 +177,3 @@ if __name__ == "__main__":
             time.sleep(60)
     except Exception as e:
         print(f"Fatal error: {e}")
-        
