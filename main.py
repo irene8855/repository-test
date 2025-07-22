@@ -47,34 +47,25 @@ def send_telegram(msg: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
     try:
-        requests.post(url, data=data, timeout=10)
-    except Exception as e:
-        print(f"Telegram send error: {e}")
+        requests.post(url, data=data)
+    except:
+        pass
 
 def get_real_price(token_in, token_out):
     try:
         router = ROUTERS["Uniswap"]["router_address"]
         abi = '[{"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"}],"name":"getAmountsOut","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"}]'
         contract = web3.eth.contract(address=router, abi=abi)
-        amount_in = 10 ** 6  # 1 USDT with 6 decimals
-        result = contract.functions.getAmountsOut(amount_in, [token_in, token_out, token_in]).call()
-        profit_percent = (result[-1] / amount_in - 1) * 100
-        return profit_percent
-    except Exception as e:
-        print(f"get_real_price error: {e}")
+        result = contract.functions.getAmountsOut(10**6, [token_in, token_out, token_in]).call()
+        return (result[-1] / 1e6 - 1) * 100
+    except:
         return None
 
 def predict_best(df, model):
     options = []
     for pair in df["pair"].unique():
-        timing_vals = df[df["pair"] == pair]["timing"]
-        if timing_vals.empty:
-            continue
-        timing = timing_vals.mean()
-        platform_vals = df[df["pair"] == pair]["platform"]
-        if platform_vals.empty:
-            continue
-        platform = platform_vals.mode().iloc[0]
+        timing = df[df["pair"] == pair]["timing"].mean()
+        platform = df[df["pair"] == pair]["platform"].mode()[0]
         tokens = pair.split("->")
         if len(tokens) == 3:
             token1 = tokens[1]
@@ -82,16 +73,13 @@ def predict_best(df, model):
                 price = get_real_price(TOKENS["USDT"], TOKENS[token1])
                 if price is not None:
                     X = pd.DataFrame([[timing, price]], columns=["timing", "profit_low"])
-                    try:
-                        pred = model.predict(X)[0]
-                        options.append({
-                            "pair": pair,
-                            "timing": timing,
-                            "platform": platform,
-                            "pred": pred
-                        })
-                    except Exception as e:
-                        print(f"Model prediction error: {e}")
+                    pred = model.predict(X)[0]
+                    options.append({
+                        "pair": pair,
+                        "timing": timing,
+                        "platform": platform,
+                        "pred": pred
+                    })
     if options:
         return max(options, key=lambda x: x["pred"])
     return None
@@ -104,23 +92,12 @@ def confirm_trade(pair):
     return None
 
 def train_model(historical_path="historical.csv"):
-    try:
-        df = pd.read_csv(historical_path)
-    except Exception as e:
-        print(f"Failed to read historical data: {e}")
-        raise
-
-    required_cols = {"timing", "profit_low", "profit_high"}
-    if not required_cols.issubset(df.columns):
-        missing = required_cols - set(df.columns)
-        raise ValueError(f"Historical data missing columns: {missing}")
-
-    df = df.dropna(subset=["timing", "profit_low", "profit_high"])
-    df["timing"] = pd.to_numeric(df["timing"], errors='coerce')
-    df["profit_low"] = pd.to_numeric(df["profit_low"], errors='coerce')
-    df["profit_high"] = pd.to_numeric(df["profit_high"], errors='coerce')
-    df = df.dropna(subset=["timing", "profit_low", "profit_high"])
-
+    df = pd.read_csv(historical_path)
+    df.columns = [c.strip() for c in df.columns]  # 🔥 удалим пробелы
+    expected = {"timing", "profit_low", "profit_high", "pair", "platform"}
+    if not expected.issubset(df.columns):
+        raise ValueError(f"Historical data missing columns: {expected - set(df.columns)}")
+    df = df.dropna()
     model = RandomForestRegressor(n_estimators=100, random_state=42)
     model.fit(df[["timing", "profit_low"]], df["profit_high"])
     return model, df
@@ -135,13 +112,16 @@ def build_url(platform_name, token_symbol):
         return ROUTERS["Uniswap"]["url"].format("USDT", token_addr)
 
 if __name__ == "__main__":
+    notified = False
     try:
         model, df = train_model()
     except Exception as e:
-        print(f"Error training model or loading data: {e}")
-        exit(1)
+        send_telegram(f"❌ Ошибка загрузки модели: {e}")
+        exit()
 
-    send_telegram("🤖 Бот запущен и работает на реальных данных.")  # Отправляем один раз при запуске
+    if not notified:
+        send_telegram("🤖 Бот запущен и работает на реальных данных.")
+        notified = True
 
     while True:
         now = datetime.datetime.now()
@@ -151,27 +131,22 @@ if __name__ == "__main__":
             start = now.strftime("%H:%M")
             end = (now + datetime.timedelta(minutes=int(best["timing"]))).strftime("%H:%M")
             url = build_url(best["platform"], best["pair"].split("->")[1])
-
             send_telegram(
-                f"📉 {best['pair']} 📈\n"
-                f"TIMING: {int(best['timing'])} мин ⌛️\n"
-                f"Время старта: {start}\n"
-                f"Время продажи: {end}\n"
-                f"ПРЕДСКАЗАННАЯ ПРИБЫЛЬ: {round(best['pred'], 2)}%\n"
-                f"ПЛАТФОРМА: {best['platform']}\n"
-                f"Ссылка: {url}"
+                f"📉{best['pair']}📈\n"
+                f"TIMING: {int(best['timing'])} MIN⌛️\n"
+                f"TIME FOR START: {start}\n"
+                f"TIME FOR SELL: {end}\n"
+                f"PROFIT: {round(best['pred'], 2)} 💸\n"
+                f"PLATFORM: {best['platform']}\n"
+                f"🔗 {url}"
             )
-
             time.sleep(int(best["timing"]) * 60)
 
             real_profit = confirm_trade(best["pair"])
             if real_profit is not None:
                 send_telegram(
-                    f"✅ Подтверждение сделки: {best['pair']}\n"
-                    f"Реальная прибыль: {round(real_profit, 2)}%"
+                    f"✅ CONFIRMED: {best['pair']}\n"
+                    f"REAL PROFIT: {round(real_profit, 2)} 💰"
                 )
-        else:
-            print("No suitable pairs found, waiting...")
-
         time.sleep(60)
         
