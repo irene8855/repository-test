@@ -1,132 +1,146 @@
 import os
 import time
-import requests
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import LinearRegression
+import requests
+import joblib
 from datetime import datetime, timedelta
-from web3 import Web3
+from sklearn.ensemble import RandomForestRegressor
 
-# ✅ Секреты из окружения
+# === ENVIRONMENT ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 POLYGON_API_URL = os.getenv("POLYGON_API_URL")
 
-# ✅ Проверка секретов
-print("✅ main.py стартовал")
-print("✅ TELEGRAM_TOKEN:", TELEGRAM_TOKEN[:5] + "..." if TELEGRAM_TOKEN else "❌ НЕТ")
-print("✅ TELEGRAM_CHAT_ID:", TELEGRAM_CHAT_ID if TELEGRAM_CHAT_ID else "❌ НЕТ")
-print("✅ POLYGON_API_URL:", POLYGON_API_URL[:20] + "..." if POLYGON_API_URL else "❌ НЕТ")
-
-# ✅ Telegram функции
-def send_telegram_message(message):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("❌ Telegram credentials not set")
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
-    try:
-        requests.post(url, json=payload)
-    except Exception as e:
-        print("❌ Ошибка при отправке в Telegram:", e)
-
-send_telegram_message("🚀 Бот мониторинга и прогноза запущен")
-
-# ✅ Список токенов (USDT-пары в сети Polygon)
-TOKENS = {
-    "MATIC": "0x0000000000000000000000000000000000001010",
-    "USDT": "0x3813e82e6f7098b9583FC0F33a962D02018B6803",
-    "UNI":  "0xb33EaAd8d922B1083446DC23f610c2567fB5180f",
+# === TOKEN ADDRESSES ===
+TOKEN_PAIRS = {
+    "FRAX": "0x45c32fa6df82ead1e2ef74d17b76547eddfaff89",
     "AAVE": "0xd6df932a45c0f255f85145f286ea0b292b21c90b",
-    "FRAX": "0x104592a158490a9228070e0a8e5343b499e125d0",
-    "SUSHI": "0x0b3F868E0BE5597D5DB7fEB59E1CADBb0fdDa50a",
-    "wstETH": "0x7ceb23fd6bc0add59e62ac25578270cff1b9f619",
+    "LDO": "0xc3d688b66703497daa19211eedff47f25384cdc3",
+    "wstETH": "0x7f39c581f595b53c5cb5bb2d7205e62b578e1e7c",
+    "BET": "0x5C3e1e1C38691eD7476A35a266fEb3cE5A770c44",
+    "GMT": "0xe3c408BD53c31C085a1746AF401A4042954ff740",
     "LINK": "0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39",
-    "LDO": "0xc3c7d422809852031b44ab29eec9f1eff2a58756",
-    "MKR": "0x6f7c932e7684666c9fd1d44527765433e01ff61d"
+    "SAND": "0xbbba073c31bf03b8acf7c28ef0738decf3695683",
+    "EMT": "0x3ea8ea4237344c9931214796d9417af1a1180770"
 }
 
-# ✅ DEX-платформы
-PLATFORMS = {
-    "sushi": "https://www.sushi.com",
-    "uniswap": "https://app.uniswap.org",
-    "1inch": "https://app.1inch.io"
+# === DEX LINKS ===
+DEX_LINKS = {
+    "sushi": "https://www.sushi.com/swap?from=USDT&to={token}",
+    "uniswap": "https://app.uniswap.org/#/swap?inputCurrency=USDT&outputCurrency={token}",
+    "1inch": "https://app.1inch.io/#/137/swap/USDT/{token}"
 }
 
-# ✅ Исторические данные через Alchemy (или другой Node API)
-def get_price_data(symbol: str, interval_minutes: int = 1, limit: int = 20):
-    # Пример на Binance — заменяется на нужный источник
-    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval_minutes}m&limit={limit}"
+# === TELEGRAM ===
+def send_telegram_message(text):
     try:
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
-        closes = [float(kline[4]) for kline in data]
-        return closes
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": text})
     except Exception as e:
-        print(f"❌ Ошибка загрузки {symbol}: {e}")
+        print(f"Telegram error: {e}")
+
+# === MODEL ===
+def load_or_train_model():
+    if os.path.exists("model.pkl"):
+        return joblib.load("model.pkl")
+
+    df = pd.read_csv("historical.csv")
+    df["avg_profit"] = (df["profit_low"] + df["profit_high"]) / 2
+    features = pd.get_dummies(df[["pair", "timing", "platform"]])
+    model = RandomForestRegressor(n_estimators=100)
+    model.fit(features, df["avg_profit"])
+    joblib.dump(model, "model.pkl")
+    return model
+
+# === PREDICT BEST TRADE ===
+def predict_best_trade(model):
+    df = pd.read_csv("historical.csv")
+    options = []
+
+    for token in TOKEN_PAIRS.keys():
+        for timing in [3, 4]:
+            for platform in DEX_LINKS.keys():
+                pair_str = f"USDT->{token}->USDT"
+                platform_url = f"https://{platform}.com" if platform != "uniswap" else "https://app.uniswap.org/"
+                row = pd.DataFrame([{
+                    "pair": pair_str,
+                    "timing": timing,
+                    "platform": platform_url
+                }])
+                X = pd.get_dummies(row).reindex(columns=model.feature_names_in_, fill_value=0)
+                pred = model.predict(X)[0]
+                options.append((pred, pair_str, timing, platform))
+
+    options.sort(reverse=True)
+    return options[0]
+
+# === REAL PROFIT CALCULATION (On-chain via Alchemy) ===
+def fetch_onchain_profit(token_address):
+    try:
+        headers = {"accept": "application/json"}
+        url = f"{POLYGON_API_URL}"
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_call",
+            "params": [{
+                "to": token_address,
+                "data": "0x70a08231000000000000000000000000" + os.getenv("WALLET_ADDRESS")[2:]
+            }, "latest"]
+        }
+        resp = requests.post(url, json=payload, headers=headers).json()
+        value = int(resp["result"], 16)
+        return round(value / 1e18, 4)  # USDT or token decimals assumed
+    except Exception as e:
+        print("Ошибка при fetch_onchain_profit:", e)
         return None
 
-# ✅ Прогноз модели
-def predict_next(prices):
-    if not prices or len(prices) < 5:
-        return None
-    X = np.array(range(len(prices))).reshape(-1, 1)
-    y = np.array(prices)
-    model = LinearRegression().fit(X, y)
-    next_x = np.array([[len(prices)]])
-    predicted_price = model.predict(next_x)[0]
-    return predicted_price
+# === MAIN LOOP ===
+def main():
+    print("✅ main.py стартовал")
+    print("✅ TELEGRAM_TOKEN:", "OK" if TELEGRAM_TOKEN else "❌")
+    print("✅ TELEGRAM_CHAT_ID:", "OK" if TELEGRAM_CHAT_ID else "❌")
+    print("✅ POLYGON_API_URL:", "OK" if POLYGON_API_URL else "❌")
 
-# ✅ Основной мониторинг
-def monitor():
+    send_telegram_message("🚀 Бот мониторинга и прогноза запущен")
+
+    model = load_or_train_model()
+
     while True:
-        print("🔍 Цикл мониторинга...")
+        predicted_profit, pair, timing, platform = predict_best_trade(model)
+        token = pair.split("->")[1]
+        token_address = TOKEN_PAIRS[token]
+        platform_link = DEX_LINKS[platform].format(token=token_address)
 
-        for symbol in ["MATICUSDT", "UNIUSDT", "AAVEUSDT"]:
-            print(f"🔄 Получаем данные для {symbol}")
-            prices = get_price_data(symbol)
-            if not prices:
-                print(f"❌ Пропускаем {symbol}")
-                continue
+        start_time = datetime.utcnow()
+        end_time = start_time + timedelta(minutes=timing)
 
-            predicted = predict_next(prices)
-            last = prices[-1]
-            change_pct = (predicted - last) / last * 100
+        predicted_msg = (
+            f"📉{pair}📈\n"
+            f"TIMING: {timing} MIN ⏱️\n"
+            f"TIME FOR START: {start_time.strftime('%H:%M')}\n"
+            f"TIME FOR SELL: {end_time.strftime('%H:%M')}\n"
+            f"PROFIT: {round(predicted_profit - 0.1, 2)}–{round(predicted_profit + 0.1, 2)} 💸\n"
+            f"PLATFORM:\n{platform_link}"
+        )
+        send_telegram_message(predicted_msg)
 
-            print(f"📊 {symbol}: текущая={last:.4f}, прогноз={predicted:.4f}, изм={change_pct:.2f}%")
+        time.sleep(timing * 60)
 
-            if abs(change_pct) >= 1.5:
-                start_time = datetime.utcnow() + timedelta(minutes=4)
-                exit_time = start_time + timedelta(minutes=4)
-                platform = list(PLATFORMS.values())[np.random.randint(0, 3)]
+        # CONFIRMATION
+        real_profit = fetch_onchain_profit(token_address)
+        if real_profit is not None:
+            confirm_msg = (
+                f"✅ CONFIRMED TRADE\n"
+                f"{pair}\n"
+                f"REAL TOKEN BALANCE: {real_profit} {token} 💰\n"
+                f"PLATFORM:\n{platform_link}"
+            )
+            send_telegram_message(confirm_msg)
 
-                message = (
-                    f"📉<b>{symbol}</b>\n"
-                    f"TIMING: 4 MIN ⌛️\n"
-                    f"TIME FOR START: {start_time.strftime('%H:%M')}\n"
-                    f"TIME FOR SELL: {exit_time.strftime('%H:%M')}\n"
-                    f"PROFIT: {change_pct:.2f}% 💸\n"
-                    f"PLATFORM: 📊\n{platform}"
-                )
-                send_telegram_message(message)
-
-                # ⏳ Ждём для confirm
-                time.sleep(240)
-                new_price = get_price_data(symbol)[-1]
-                real_change = (new_price - last) / last * 100
-
-                confirm_msg = (
-                    f"✅ <b>CONFIRMED {symbol}</b>\n"
-                    f"Предсказание: {change_pct:.2f}%\n"
-                    f"Факт: {real_change:.2f}%\n"
-                    f"Результат: {'✅ Успешно' if abs(real_change) >= abs(change_pct * 0.8) else '❌ Мимо'}"
-                )
-                send_telegram_message(confirm_msg)
-
-        print("⏳ Цикл завершён. Ждём 1 минуту.")
         time.sleep(60)
 
 if __name__ == "__main__":
-    monitor()
+    main()
     
