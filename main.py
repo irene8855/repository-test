@@ -1,145 +1,175 @@
 import os
+import csv
 import time
-import pandas as pd
-import numpy as np
 import requests
-import joblib
+import pandas as pd
 from datetime import datetime, timedelta
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from dotenv import load_dotenv
+from web3 import Web3
 
-# === ENVIRONMENT ===
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+load_dotenv()
+
+# Конфиги и ключи
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-POLYGON_API_URL = os.getenv("POLYGON_API_URL")
+POLYGON_API_KEY = os.getenv("POLYGON_API_KEY")
+INFURA_URL = f"https://polygon-mainnet.infura.io/v3/{POLYGON_API_KEY}"  # Или Alchemy URL
+w3 = Web3(Web3.HTTPProvider(INFURA_URL))
 
-# === TOKEN ADDRESSES ===
-TOKEN_PAIRS = {
-    "FRAX": "0x45c32fa6df82ead1e2ef74d17b76547eddfaff89",
-    "AAVE": "0xd6df932a45c0f255f85145f286ea0b292b21c90b",
-    "LDO": "0xc3d688b66703497daa19211eedff47f25384cdc3",
-    "wstETH": "0x7f39c581f595b53c5cb5bb2d7205e62b578e1e7c",
-    "BET": "0x5C3e1e1C38691eD7476A35a266fEb3cE5A770c44",
-    "GMT": "0xe3c408BD53c31C085a1746AF401A4042954ff740",
-    "LINK": "0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39",
-    "SAND": "0xbbba073c31bf03b8acf7c28ef0738decf3695683",
-    "EMT": "0x3ea8ea4237344c9931214796d9417af1a1180770"
+# Платформы и токены
+PLATFORMS = {
+    "https://www.sushi.com": "SushiSwap",
+    "https://app.uniswap.org/": "Uniswap",
+    "https://1inch.io": "1inch"
 }
 
-# === DEX LINKS ===
-DEX_LINKS = {
-    "sushi": "https://www.sushi.com/swap?from=USDT&to={token}",
-    "uniswap": "https://app.uniswap.org/#/swap?inputCurrency=USDT&outputCurrency={token}",
-    "1inch": "https://app.1inch.io/#/137/swap/USDT/{token}"
+TOKENS = {
+    "USDT": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "FRAX": "0x853d955acef822db058eb8505911ed77f175b99e",
+    "EMT": "0x0000000000000000000000000000000000000000",  # заменить на реальный адрес
+    "AAVE": "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",
+    "LDO": "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32",
+    "BET": "0x0000000000000000000000000000000000000000",  # заменить
+    "wstETH": "0x7f39C581F595B53c5cbf63B5b4F30D47b810F1eC",
+    "GMT": "0x0000000000000000000000000000000000000000",  # заменить
+    "Link": "0x514910771AF9Ca656af840dff83E8264EcF986CA",
+    "SAND": "0x0000000000000000000000000000000000000000"  # заменить
 }
 
-# === TELEGRAM ===
+HISTORICAL_CSV = "historical.csv"
+
+# Загрузка исторических данных и подготовка ML модели
+def load_and_train_model():
+    df = pd.read_csv(HISTORICAL_CSV, delimiter='\t')
+    # Преобразуем категориальные данные: platform и pair в числовые индексы
+    df['platform_id'] = df['platform'].astype('category').cat.codes
+    df['pair_id'] = df['pair'].astype('category').cat.codes
+
+    features = df[['timing', 'platform_id', 'pair_id']]
+    target_low = df['profit_low']
+    target_high = df['profit_high']
+
+    X_train, X_test, y_train_low, y_test_low = train_test_split(features, target_low, test_size=0.2, random_state=42)
+    _, _, y_train_high, y_test_high = train_test_split(features, target_high, test_size=0.2, random_state=42)
+
+    model_low = RandomForestRegressor(n_estimators=100, random_state=42)
+    model_high = RandomForestRegressor(n_estimators=100, random_state=42)
+
+    model_low.fit(X_train, y_train_low)
+    model_high.fit(X_train, y_train_high)
+
+    return model_low, model_high, df
+
+# Отправка сообщений в Telegram
 def send_telegram_message(text):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": text})
-    except Exception as e:
-        print(f"Telegram error: {e}")
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
+    r = requests.post(url, data=payload)
+    if not r.ok:
+        print(f"Telegram send error: {r.text}")
 
-# === MODEL ===
-def load_or_train_model():
-    if os.path.exists("model.pkl"):
-        return joblib.load("model.pkl")
+# Генерация ссылок с prefilled swap на платформе
+def generate_trade_link(platform_url, pair):
+    tokens = pair.split("->")
+    base_urls = {
+        "https://1inch.io": f"https://app.1inch.io/#/polygon/swap/{tokens[0]}/{tokens[1]}",
+        "https://www.sushi.com": f"https://app.sushi.com/swap?inputCurrency={tokens[0]}&outputCurrency={tokens[1]}",
+        "https://app.uniswap.org/": f"https://app.uniswap.org/#/swap?inputCurrency={tokens[0]}&outputCurrency={tokens[1]}"
+    }
+    return base_urls.get(platform_url, platform_url)
 
-    df = pd.read_csv("historical.csv")
-    df["avg_profit"] = (df["profit_low"] + df["profit_high"]) / 2
-    features = pd.get_dummies(df[["pair", "timing", "platform"]])
-    model = RandomForestRegressor(n_estimators=100)
-    model.fit(features, df["avg_profit"])
-    joblib.dump(model, "model.pkl")
-    return model
+# Получение текущей цены по on-chain через Polygon API (пример)
+def get_onchain_price(token_address):
+    # Пример запроса к Polygon API или Web3 контрактам — здесь нужно заменить на реальный вызов
+    # Для упрощения можно использовать данные с публичных API DEX или ораклов
+    # Возвращаем float цену токена в USDT, заглушка:
+    return 1.0  # заменить на реальный запрос
 
-# === PREDICT BEST TRADE ===
-def predict_best_trade(model):
-    df = pd.read_csv("historical.csv")
-    options = []
-
-    for token in TOKEN_PAIRS.keys():
-        for timing in [3, 4]:
-            for platform in DEX_LINKS.keys():
-                pair_str = f"USDT->{token}->USDT"
-                platform_url = f"https://{platform}.com" if platform != "uniswap" else "https://app.uniswap.org/"
-                row = pd.DataFrame([{
-                    "pair": pair_str,
-                    "timing": timing,
-                    "platform": platform_url
-                }])
-                X = pd.get_dummies(row).reindex(columns=model.feature_names_in_, fill_value=0)
-                pred = model.predict(X)[0]
-                options.append((pred, pair_str, timing, platform))
-
-    options.sort(reverse=True)
-    return options[0]
-
-# === REAL PROFIT CALCULATION (On-chain via Alchemy) ===
-def fetch_onchain_profit(token_address):
-    try:
-        headers = {"accept": "application/json"}
-        url = f"{POLYGON_API_URL}"
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "eth_call",
-            "params": [{
-                "to": token_address,
-                "data": "0x70a08231000000000000000000000000" + os.getenv("WALLET_ADDRESS")[2:]
-            }, "latest"]
-        }
-        resp = requests.post(url, json=payload, headers=headers).json()
-        value = int(resp["result"], 16)
-        return round(value / 1e18, 4)  # USDT or token decimals assumed
-    except Exception as e:
-        print("Ошибка при fetch_onchain_profit:", e)
+# Проверка результата сделки (confirmed) — расчет прибыли on-chain
+def check_trade_result(pair, buy_time, sell_time):
+    # Разбор пары
+    tokens = pair.split("->")
+    token_in = TOKENS.get(tokens[0])
+    token_out = TOKENS.get(tokens[1])
+    if not token_in or not token_out:
         return None
 
-# === MAIN LOOP ===
+    # Получить цены buy и sell on-chain (запросы к API или контракты)
+    price_buy = get_onchain_price(token_in)  # пример
+    price_sell = get_onchain_price(token_out)  # пример
+
+    profit_percent = ((price_sell - price_buy) / price_buy) * 100
+    return profit_percent
+
+# Формирование predicted сообщения
+def send_predicted(trade, model_low, model_high, df):
+    pair = trade["pair"]
+    timing = trade["timing"]
+    platform = trade["platform"]
+
+    # Подготовка входа для модели
+    platform_id = df.loc[df['platform'] == platform, 'platform'].astype('category').cat.codes.iloc[0]
+    pair_id = df.loc[df['pair'] == pair, 'pair'].astype('category').cat.codes.iloc[0]
+
+    X_pred = [[timing, platform_id, pair_id]]
+    profit_low_pred = model_low.predict(X_pred)[0]
+    profit_high_pred = model_high.predict(X_pred)[0]
+
+    now = datetime.utcnow()
+    start_time = now + timedelta(minutes=1)
+    sell_time = start_time + timedelta(minutes=timing)
+
+    trade_link = generate_trade_link(platform, pair)
+
+    msg = (f"📉{pair}📈\n"
+           f"TIMING: {timing} MIN⌛️\n"
+           f"TIME FOR START: {start_time.strftime('%H:%M UTC')}\n"
+           f"TIME FOR SELL: {sell_time.strftime('%H:%M UTC')}\n"
+           f"PROFIT: {profit_low_pred:.2f}-{profit_high_pred:.2f} 💸\n"
+           f"PLATFORMS: 📊\n"
+           f"{trade_link}")
+    send_telegram_message(msg)
+    return start_time, sell_time
+
+# Формирование confirmed сообщения
+def send_confirmed(trade, start_time, sell_time):
+    pair = trade["pair"]
+    platform = trade["platform"]
+
+    profit_real = check_trade_result(pair, start_time, sell_time)
+    if profit_real is None:
+        msg = f"⚠️ Не удалось получить результат сделки {pair} на {platform}."
+    else:
+        msg = (f"✅ Сделка {pair} на платформе {platform} завершена.\n"
+               f"Реальная прибыль: {profit_real:.2f}%.\n"
+               f"Прогноз оправдан." if profit_real > 0 else f"Прогноз не подтвердился.")
+
+    send_telegram_message(msg)
+
 def main():
-    print("✅ main.py стартовал")
-    print("✅ TELEGRAM_TOKEN:", "OK" if TELEGRAM_TOKEN else "❌")
-    print("✅ TELEGRAM_CHAT_ID:", "OK" if TELEGRAM_CHAT_ID else "❌")
-    print("✅ POLYGON_API_URL:", "OK" if POLYGON_API_URL else "❌")
+    send_telegram_message("🤖 Бот запущен и работает на сети Polygon для платформ Sushi, Uniswap и 1inch.")
 
-    send_telegram_message("🚀 Бот мониторинга и прогноза запущен")
-
-    model = load_or_train_model()
+    model_low, model_high, df = load_and_train_model()
 
     while True:
-        predicted_profit, pair, timing, platform = predict_best_trade(model)
-        token = pair.split("->")[1]
-        token_address = TOKEN_PAIRS[token]
-        platform_link = DEX_LINKS[platform].format(token=token_address)
+        now = datetime.utcnow()
 
-        start_time = datetime.utcnow()
-        end_time = start_time + timedelta(minutes=timing)
+        # Пример логики: проходим по всем сделкам из historical и отправляем predicted
+        for trade in df.to_dict(orient='records'):
+            start_time, sell_time = send_predicted(trade, model_low, model_high, df)
 
-        predicted_msg = (
-            f"📉{pair}📈\n"
-            f"TIMING: {timing} MIN ⏱️\n"
-            f"TIME FOR START: {start_time.strftime('%H:%M')}\n"
-            f"TIME FOR SELL: {end_time.strftime('%H:%M')}\n"
-            f"PROFIT: {round(predicted_profit - 0.1, 2)}–{round(predicted_profit + 0.1, 2)} 💸\n"
-            f"PLATFORM:\n{platform_link}"
-        )
-        send_telegram_message(predicted_msg)
+            # Ждем время сделки + небольшой буфер (в реальном боте можно лучше расписать по расписанию)
+            wait_seconds = (sell_time - datetime.utcnow()).total_seconds()
+            if wait_seconds > 0:
+                time.sleep(wait_seconds)
 
-        time.sleep(timing * 60)
+            send_confirmed(trade, start_time, sell_time)
 
-        # CONFIRMATION
-        real_profit = fetch_onchain_profit(token_address)
-        if real_profit is not None:
-            confirm_msg = (
-                f"✅ CONFIRMED TRADE\n"
-                f"{pair}\n"
-                f"REAL TOKEN BALANCE: {real_profit} {token} 💰\n"
-                f"PLATFORM:\n{platform_link}"
-            )
-            send_telegram_message(confirm_msg)
+            time.sleep(5)  # небольшой буфер между итерациями
 
-        time.sleep(60)
+        time.sleep(60)  # через минуту повторяем цикл
 
 if __name__ == "__main__":
     main()
