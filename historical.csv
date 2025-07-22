@@ -1,21 +1,22 @@
-pair	timing	profit_low	profit_high	platform
-USDT->FRAX->USDT	4	1.73	2.11	https://www.sushi.com
-USDT->EMT->USDT	3	1.65	1.91	https://www.sushi.com
-USDT->AAVE->USDT	3	-1.04	-1.04	https://app.uniswap.org/
-USDT->LDO->USDT	3	1.75	1.91	https://app.uniswap.org/
-USDT->BET->USDT	4	1.84	2.16	https://app.uniswap.org
-USDT->wstETH->USDT	4	1.67	1.92	https://1inch.io
-USDT->FRAX->USDT	4	1.81	2.12	https://1inch.io
-USDT->BET->USDT	3	1.64	2.07	https://www.sushi.com
-USDT->GMT->USDT	3	1.67	2.17	https://www.sushi.com
-USDT->Link->USDT	3	-0.65	-0.65	https://www.sushi.com
-USDT->wstETH->USDT	4	1.86	2.18	https://www.sushi.com
-USDT->LDO->USDT	3	1.73	2.13	https://www.sushi.com
-USDT->FRAX->USDT	3	1.65	2.02	https://www.sushi.com
-USDT->BET->USDT	3	1.71	2.03	https://app.uniswap.org/
-USDT->GMT->USDT	3	1.82	2.23	https://app.uniswap.org/
-USDT->BET->USDT	4	1.76	2.14	https://www.sushi.com
-USDT->SAND->USDT	3	1.81	2.12	https://1inch.io
-USDT->LDO->USDT	3	1.85	2.2	https://www.sushi.com
-USDT->GMT->USDT	3	1.76	2.12	https://1inch.io
-USDT->EMT->USDT	3	1.63	2.04	https://1inch.io
+pair,timing,profit_low,profit_high,platform
+USDT->FRAX->USDT,4,1.73,2.11,https://www.sushi.com
+USDT->EMT->USDT,3,1.65,1.91,https://www.sushi.com
+USDT->AAVE->USDT,3,-1.04,-1.04,https://app.uniswap.org/
+USDT->LDO->USDT,3,1.75,1.91,https://app.uniswap.org/
+USDT->BET->USDT,4,1.84,2.16,https://app.uniswap.org
+USDT->wstETH->USDT,4,1.67,1.92,https://1inch.io
+USDT->FRAX->USDT,4,1.81,2.12,https://1inch.io
+USDT->BET->USDT,3,1.64,2.07,https://www.sushi.com
+USDT->GMT->USDT,3,1.67,2.17,https://www.sushi.com
+USDT->Link->USDT,3,-0.65,-0.65,https://www.sushi.com
+USDT->wstETH->USDT,4,1.86,2.18,https://www.sushi.com
+USDT->LDO->USDT,3,1.73,2.13,https://www.sushi.com
+USDT->FRAX->USDT,3,1.65,2.02,https://www.sushi.com
+USDT->BET->USDT,3,1.71,2.03,https://app.uniswap.org/
+USDT->GMT->USDT,3,1.82,2.23,https://app.uniswap.org/
+USDT->BET->USDT,4,1.76,2.14,https://www.sushi.com
+USDT->SAND->USDT,3,1.81,2.12,https://1inch.io
+USDT->LDO->USDT,3,1.85,2.2,https://www.sushi.com
+USDT->GMT->USDT,3,1.76,2.12,https://1inch.io
+USDT->EMT->USDT,3,1.63,2.04,https://1inch.io
+USDT->FRAX->USDT,3,1.87,2.12,https://www.sushi.com
