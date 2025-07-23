@@ -46,9 +46,6 @@ TOKENS = {
     "EMT": Web3.to_checksum_address("0x6bE7E4A2202cB6E60ef3F94d27a65b906FdA7D86")
 }
 
-# Обратный словарь для определения токена по адресу
-ADDRESS_TO_SYMBOL = {addr: symbol for symbol, addr in TOKENS.items()}
-
 # Telegram send
 def send_telegram(msg: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -58,14 +55,9 @@ def send_telegram(msg: str):
     except Exception as e:
         print(f"Telegram send error: {e}")
 
-# Реальный вызов getAmountsOut через контракт Uniswap
+# Реальный вызов getAmountsOut через контракт
 def get_real_price(token_in, token_out):
     try:
-        # Telegram сообщение о запросе через Uniswap
-        token_in_name = ADDRESS_TO_SYMBOL.get(token_in, token_in)
-        token_out_name = ADDRESS_TO_SYMBOL.get(token_out, token_out)
-        send_telegram(f"🔍 Запрос цены через Uniswap: {token_in_name} → {token_out_name}")
-
         router = ROUTERS["Uniswap"]["router_address"]
         abi = '[{"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"}],"name":"getAmountsOut","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"}]'
         contract = web3.eth.contract(address=router, abi=abi)
@@ -185,4 +177,3 @@ if __name__ == "__main__":
             time.sleep(60)
     except Exception as e:
         print(f"Fatal error: {e}")
-        
