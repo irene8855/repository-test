@@ -4,7 +4,6 @@ import pandas as pd
 import numpy as np
 import requests
 import datetime
-from sklearn.ensemble import RandomForestRegressor
 from web3 import Web3
 from dotenv import load_dotenv
 
@@ -32,7 +31,6 @@ ROUTERS = {
     }
 }
 
-# Адреса токенов (Polygon)
 TOKENS = {
     "USDT": Web3.to_checksum_address("0xc2132D05D31c914a87C6611C10748AaCbA6cD43E"),
     "FRAX": Web3.to_checksum_address("0x45c32fa6df82ead1e2ef74d17b76547eddfaff89"),
@@ -46,7 +44,7 @@ TOKENS = {
     "EMT": Web3.to_checksum_address("0x6bE7E4A2202cB6E60ef3F94d27a65b906FdA7D86")
 }
 
-# Telegram send
+# Telegram отправка
 def send_telegram(msg: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
@@ -55,125 +53,60 @@ def send_telegram(msg: str):
     except Exception as e:
         print(f"Telegram send error: {e}")
 
-# Реальный вызов getAmountsOut через контракт
-def get_real_price(token_in, token_out):
+# Получение прибыли по маршруту
+def get_real_profit(token_symbol):
     try:
         router = ROUTERS["Uniswap"]["router_address"]
         abi = '[{"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"}],"name":"getAmountsOut","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"}]'
         contract = web3.eth.contract(address=router, abi=abi)
-        result = contract.functions.getAmountsOut(10**6, [token_in, token_out, token_in]).call()
+        result = contract.functions.getAmountsOut(10**6, [TOKENS["USDT"], TOKENS[token_symbol], TOKENS["USDT"]]).call()
         return (result[-1] / 1e6 - 1) * 100
     except:
         return None
 
-# Предсказание по модели
-def predict_best(df, model):
-    options = []
-    for pair in df["pair"].unique():
-        subset = df[df["pair"] == pair]
-        if subset.empty:
-            continue
-        timing = subset["timing"].mean()
-        platform = subset["platform"].mode()[0]
-        tokens = pair.split("->")
-        if len(tokens) == 3:
-            token1 = tokens[1]
-            if token1 in TOKENS:
-                price = get_real_price(TOKENS["USDT"], TOKENS[token1])
-                if price is not None:
-                    X = pd.DataFrame([[timing, price]], columns=["timing", "profit_low"])
-                    pred = model.predict(X)[0]
-                    options.append({
-                        "pair": pair,
-                        "timing": timing,
-                        "platform": platform,
-                        "pred": pred
-                    })
-    if options:
-        return max(options, key=lambda x: x["pred"])
-    return None
-
-# Confirm результат
-def confirm_trade(pair):
-    tokens = pair.split("->")
-    if len(tokens) == 3 and tokens[1] in TOKENS:
-        profit = get_real_price(TOKENS["USDT"], TOKENS[tokens[1]])
-        return profit
-    return None
-
-# Обучение модели
-def train_model(historical_path="historical.csv"):
-    try:
-        df = pd.read_csv(historical_path, encoding='utf-8-sig')
-        df.columns = [col.strip() for col in df.columns]
-        required_cols = {"pair", "timing", "profit_low", "profit_high", "platform"}
-        if not required_cols.issubset(df.columns):
-            raise ValueError(f"Historical data missing columns: {required_cols - set(df.columns)}")
-        df = df.dropna()
-        model = RandomForestRegressor(n_estimators=100, random_state=42)
-        model.fit(df[["timing", "profit_low"]], df["profit_high"])
-        return model, df
-    except Exception as e:
-        send_telegram(f"❌ Ошибка загрузки модели: {e}")
-        raise
-
-# Прямой URL
-def build_url(platform_name, token_symbol):
-    token_addr = TOKENS[token_symbol]
-    if platform_name == "1inch":
+# Построение ссылки
+def build_url(platform, token_symbol):
+    if platform == "1inch":
         return ROUTERS["1inch"]["url"].format("USDT", token_symbol)
-    elif platform_name == "SushiSwap":
-        return ROUTERS["SushiSwap"]["url"].format("USDT", token_addr)
+    elif platform == "SushiSwap":
+        return ROUTERS["SushiSwap"]["url"].format("USDT", TOKENS[token_symbol])
     else:
-        return ROUTERS["Uniswap"]["url"].format("USDT", token_addr)
+        return ROUTERS["Uniswap"]["url"].format("USDT", TOKENS[token_symbol])
 
-# Основной запуск
+# Главный цикл
 if __name__ == "__main__":
-    try:
-        model, df = train_model()
-        send_telegram("🤖 Бот запущен и работает на реальных данных.")
+    notified = {}  # токен -> время последней отправки
+    send_telegram("🤖 Бот запущен. Ожидаем всплесков прибыли...")
 
-        while True:
-            now = datetime.datetime.now()
-            best = predict_best(df, model)
+    while True:
+        now = datetime.datetime.now()
+        for token in TOKENS:
+            if token == "USDT":
+                continue
 
-            if best:
-                start = now.strftime("%H:%M")
-                end = (now + datetime.timedelta(minutes=int(best["timing"]))).strftime("%H:%M")
-                url = build_url(best["platform"], best["pair"].split("->")[1])
+            profit = get_real_profit(token)
+            if profit and profit > 1.6:
+                last_sent = notified.get(token, now - datetime.timedelta(minutes=10))
+                if (now - last_sent).total_seconds() < 300:
+                    continue  # Не спамим раньше 5 минут
 
-                if best["pred"] >= 1.5:
-                    send_telegram(
-                        f"🚨 УВЕРЕННЫЙ ВХОД\n"
-                        f"{best['pair']}\n"
-                        f"TIMING: {int(best['timing'])} MIN⌛️\n"
-                        f"TIME FOR START: {start}\n"
-                        f"TIME FOR SELL: {end}\n"
-                        f"PROFIT: {round(best['pred'], 2)} 💸\n"
-                        f"PLATFORM: {best['platform']}\n"
-                        f"🔗 {url}"
-                    )
-                elif best["pred"] >= 1.0:
-                    send_telegram(
-                        f"📊 ВОЗМОЖНЫЙ ВХОД (на рассмотрение)\n"
-                        f"{best['pair']}\n"
-                        f"TIMING: {int(best['timing'])} MIN⌛️\n"
-                        f"TIME FOR START: {start}\n"
-                        f"TIME FOR SELL: {end}\n"
-                        f"PROFIT: {round(best['pred'], 2)} 💸\n"
-                        f"PLATFORM: {best['platform']}\n"
-                        f"🔗 {url}"
-                    )
+                timing = 4  # минуты сделки
+                delay_notice = 3  # за сколько минут уведомить
 
-                time.sleep(int(best["timing"]) * 60)
+                start_time = (now + datetime.timedelta(minutes=delay_notice)).strftime("%H:%M")
+                end_time = (now + datetime.timedelta(minutes=delay_notice + timing)).strftime("%H:%M")
+                url = build_url("SushiSwap", token)  # можно поменять на динамический выбор
 
-                real_profit = confirm_trade(best["pair"])
-                if real_profit is not None:
-                    send_telegram(
-                        f"✅ CONFIRMED: {best['pair']}\n"
-                        f"REAL PROFIT: {round(real_profit, 2)} 💰"
-                    )
+                msg = (
+                    f"📉USDT->{token}->USDT📈\n"
+                    f"TIMING: {timing} MIN⌛️\n"
+                    f"TIME FOR START: {start_time}\n"
+                    f"TIME FOR SELL: {end_time}\n"
+                    f"PROFIT: {round(profit, 2)} 💸\n"
+                    f"PLATFORMS:📊\n{url}"
+                )
+                send_telegram(msg)
+                notified[token] = now
 
-            time.sleep(60)
-    except Exception as e:
-        print(f"Fatal error: {e}")
+        time.sleep(60)
+        
