@@ -2,24 +2,50 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta
 
-symbol = "FRAXUSDT"
-granularity = 60  # 1 минута
+def get_frax_candles():
+    symbol = "FRAXUSDT"  # ВНИМАНИЕ: без дефиса!
+    granularity = 60     # 60 секунд = 1 минута
 
-# Интервал: 5 минут до сделки (15:06 — 15:11, 22 июля 2025)
-end_time = datetime(2025, 7, 22, 15, 11)
-start_time = end_time - timedelta(minutes=5)
+    # Статический диапазон: 22 июля 2025, 15:06 — 15:11
+    end_time = datetime(2025, 7, 22, 15, 11)
+    start_time = end_time - timedelta(minutes=5)
 
-start = int(start_time.timestamp() * 1000)
-end = int(end_time.timestamp() * 1000)
+    # В миллисекундах
+    start = int(start_time.timestamp() * 1000)
+    end = int(end_time.timestamp() * 1000)
 
-url = f"https://api.bitget.com/api/spot/v1/market/candles?symbol={symbol}&granularity={granularity}&startTime={start}&endTime={end}"
+    url = (
+        f"https://api.bitget.com/api/spot/v1/market/candles"
+        f"?symbol={symbol}&granularity={granularity}&startTime={start}&endTime={end}"
+    )
 
-response = requests.get(url)
-data = response.json()
+    print(f"[INFO] Запрос к Bitget: {url}")
+    response = requests.get(url)
+    
+    try:
+        response.raise_for_status()
+        data = response.json()
 
-df = pd.DataFrame(data["data"], columns=["timestamp", "open", "high", "low", "close", "volume"])
-df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-df = df.sort_values("timestamp")
-df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "close", "volume"]].astype(float)
+        if "data" not in data or not data["data"]:
+            print("[WARNING] Пустой ответ от Bitget или данных нет")
+            print("Raw response:", response.text)
+            return pd.DataFrame()
 
-print(df)
+        df = pd.DataFrame(data["data"], columns=["timestamp", "open", "high", "low", "close", "volume"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+        df = df.sort_values("timestamp")
+        df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "close", "volume"]].astype(float)
+        print("[INFO] Получено свечей:", len(df))
+
+        return df
+    
+    except Exception as e:
+        print("[ERROR] Ошибка при запросе данных:", str(e))
+        print("Raw response:", response.text)
+        return pd.DataFrame()
+
+
+# --- Основной вызов ---
+if __name__ == "__main__":
+    df = get_frax_candles()
+    print(df if not df.empty else "[RESULT] Данных нет")
