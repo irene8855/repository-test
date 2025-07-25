@@ -183,6 +183,11 @@ if __name__ == "__main__":
                 continue
 
             profits = get_profits(token)
+
+# Отладочное сообщение о доходности на всех платформах
+debug_lines = [f"[DEBUG] {token} на {dex}: {round(profit, 2)}%" if profit is not None else f"[DEBUG] {token} на {dex}: нет данных" for dex, profit in profits.items()]
+send_telegram("\n".join(debug_lines))
+
             if not profits:
                 continue
 
@@ -263,4 +268,3 @@ if __name__ == "__main__":
             trade_records.pop(token, None)
 
         time.sleep(20)
-        
