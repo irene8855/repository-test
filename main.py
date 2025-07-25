@@ -6,6 +6,8 @@ import requests
 import pandas as pd
 from web3 import Web3
 from dotenv import load_dotenv
+from flask import Flask
+import threading
 
 # Загрузка переменных окружения из .env
 load_dotenv()
@@ -169,13 +171,29 @@ def save_to_csv(data):
         df = pd.concat([df_existing, df], ignore_index=True)
     df.to_csv(filename, index=False)
 
+app = Flask(__name__)
+
+@app.route("/health")
+def health_check():
+    return "OK", 200
+
+def run_flask():
+    app.run(host="0.0.0.0", port=8080)
+
 if __name__ == "__main__":
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+
     notified = {}
     trade_records = {}
 
+    print("🤖 Бот запущен. Ожидаем всплесков прибыли...")
     send_telegram("🤖 Бот запущен. Ожидаем всплесков прибыли...")
 
     while True:
+        print(f"[{datetime.datetime.now()}] Цикл запускается")
+
         now = datetime.datetime.now()
 
         for token in TOKENS:
@@ -275,5 +293,6 @@ if __name__ == "__main__":
         for token in to_remove:
             trade_records.pop(token, None)
 
+        print(f"[{datetime.datetime.now()}] Цикл завершён, спим 20 сек")
         time.sleep(20)
         
