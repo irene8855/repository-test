@@ -9,7 +9,6 @@ primary_region = "lhr"
   auto_rollback = true
 
 [[services]]
-  protocol = "http"
   internal_port = 8080
 
   [[services.ports]]
