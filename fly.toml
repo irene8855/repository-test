@@ -1,6 +1,6 @@
 app = "repository-test"
 
-primary_region = "lhr"  # Лондон (London Heathrow)
+primary_region = "lhr"
 
 [build]
   buildpacks = ["heroku/python"]
@@ -8,13 +8,10 @@ primary_region = "lhr"  # Лондон (London Heathrow)
 [env]
   PORT = "8080"
 
-[experimental]
-  auto_rollback = true
-
 [[services]]
   protocol = "tcp"
   internal_port = 8080
-  processes = ["app"]
+  processes = ["web"]
 
   [[services.ports]]
     port = 80
