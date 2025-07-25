@@ -1,12 +1,25 @@
-app = "repository-trade-bot"  # можно изменить на любое уникальное имя
+app = "repository-test"
+region = "lhr"  # Лондон (London Heathrow)
 
-primary_region = "lon"  # Лондон
+kill_signal = "SIGINT"
+kill_timeout = 5
 
-[env]
-  PYTHONUNBUFFERED = "true"
-
-[experimental]
-  auto_rollback = true
+[build]
+  builder = "paketobuildpacks/builder:base"
 
 [deploy]
-  strategy = "immediate"
+  release_command = ""
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+
+  [services.concurrency]
+    soft_limit = 20
+    hard_limit = 25
+
+  [[services.ports]]
+    port = 80
+
+  [[services.ports]]
+    port = 443
