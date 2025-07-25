@@ -294,7 +294,4 @@ def main_loop():
 def start_background_loop():
     threading.Thread(target=main_loop, daemon=True).start()
 
-if __name__ == "__main__":
-    start_background_loop()
-    app.run(host="0.0.0.0", port=8080)
     
