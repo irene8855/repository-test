@@ -11,13 +11,9 @@ primary_region = "lhr"  # Лондон (London Heathrow)
 [experimental]
   auto_rollback = true
 
-[processes]
-  web = "python main.py"
-
 [[services]]
   protocol = "tcp"
   internal_port = 8080
-  processes = ["web"]
 
   [[services.ports]]
     port = 80
