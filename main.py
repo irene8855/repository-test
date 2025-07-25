@@ -294,4 +294,6 @@ def main_loop():
 def start_background_loop():
     threading.Thread(target=main_loop, daemon=True).start()
 
-    
+ @app.before_first_request
+def before_first_request():
+    start_background_loop()   
