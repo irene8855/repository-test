@@ -16,4 +16,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["gunicorn", "main:app", "-b", "0.0.0.0:8080"]
+CMD ["gunicorn", "wsgi:application", "-b", "0.0.0.0:8080"]
