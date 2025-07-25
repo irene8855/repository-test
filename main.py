@@ -184,13 +184,16 @@ if __name__ == "__main__":
 
             profits = get_profits(token)
 
-            # Отладочное сообщение о доходности на всех платформах
+            # ✅ Отладка
             debug_lines = [
                 f"[DEBUG] {token} на {dex}: {round(profit, 2)}%" if profit is not None else f"[DEBUG] {token} на {dex}: нет данных"
                 for dex, profit in profits.items()
             ]
             try:
-                send_telegram("\n".join(debug_lines))
+                debug_message = "\n".join(debug_lines)
+                print(debug_message)
+                if debug_message:
+                    send_telegram(debug_message[:400])
             except Exception as e:
                 print(f"[DEBUG ERROR] {e}")
 
