@@ -1,25 +1,29 @@
 app = "repository-test"
-region = "lhr"  # Лондон (London Heathrow)
 
-kill_signal = "SIGINT"
-kill_timeout = 5
+primary_region = "lhr"  # Лондон (London Heathrow)
 
 [build]
-  builder = "paketobuildpacks/builder:base"
+  buildpacks = ["heroku/python"]
 
-[deploy]
-  release_command = ""
+[env]
+  PORT = "8080"
+
+[experimental]
+  auto_rollback = true
 
 [[services]]
-  internal_port = 8080
   protocol = "tcp"
-
-  [services.concurrency]
-    soft_limit = 20
-    hard_limit = 25
+  internal_port = 8080
+  processes = ["app"]
 
   [[services.ports]]
     port = 80
 
   [[services.ports]]
     port = 443
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "5s"
+    restart_limit = 0
