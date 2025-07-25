@@ -170,8 +170,8 @@ def save_to_csv(data):
     df.to_csv(filename, index=False)
 
 if __name__ == "__main__":
-    notified = {}  # token -> время уведомления
-    trade_records = {}  # token -> данные сделки
+    notified = {}
+    trade_records = {}
 
     send_telegram("🤖 Бот запущен. Ожидаем всплесков прибыли...")
 
@@ -184,9 +184,15 @@ if __name__ == "__main__":
 
             profits = get_profits(token)
 
-# Отладочное сообщение о доходности на всех платформах
-debug_lines = [f"[DEBUG] {token} на {dex}: {round(profit, 2)}%" if profit is not None else f"[DEBUG] {token} на {dex}: нет данных" for dex, profit in profits.items()]
-send_telegram("\n".join(debug_lines))
+            # Отладочное сообщение о доходности на всех платформах
+            debug_lines = [
+                f"[DEBUG] {token} на {dex}: {round(profit, 2)}%" if profit is not None else f"[DEBUG] {token} на {dex}: нет данных"
+                for dex, profit in profits.items()
+            ]
+            try:
+                send_telegram("\n".join(debug_lines))
+            except Exception as e:
+                print(f"[DEBUG ERROR] {e}")
 
             if not profits:
                 continue
@@ -245,7 +251,6 @@ send_telegram("\n".join(debug_lines))
                     "volatility": volatility
                 })
 
-        # Подтверждение сделок через 4 минуты
         to_remove = []
         for token, info in trade_records.items():
             elapsed = (now - info["start"]).total_seconds()
@@ -268,3 +273,4 @@ send_telegram("\n".join(debug_lines))
             trade_records.pop(token, None)
 
         time.sleep(20)
+        
