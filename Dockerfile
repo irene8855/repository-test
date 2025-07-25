@@ -1,6 +1,5 @@
 FROM python:3.10-slim
 
-# Установка системных библиотек
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
@@ -16,4 +15,5 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-CMD ["python", "main.py"]
+
+CMD ["gunicorn", "main:app", "-b", "0.0.0.0:8080"]
