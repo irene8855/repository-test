@@ -192,11 +192,11 @@ def main_loop():
     send_telegram("🤖 Бот запущен. Ожидаем всплесков прибыли...")
 
     while True:
-    try:
-        now = datetime.datetime.now()
-        next_run = now + datetime.timedelta(seconds=60)
+        try:
+            now = datetime.datetime.now()
+            next_run = now + datetime.timedelta(seconds=60)
 
-        print(f"[DEBUG] Tick at {now}")  # DEBUG: периодический тик
+            print(f"[DEBUG] Tick at {now}")  # DEBUG: периодический тик
 
             for token in TOKENS:
                 if token == "USDT":
@@ -234,8 +234,6 @@ def main_loop():
 
                     volume, volatility = get_volume_volatility(ROUTERS[max_platform]["router_address"], token)
                     print(f"[DEBUG] Объем: {volume}, Волатильность: {volatility:.4f}")  # DEBUG: объем и волатильность
-
-                    # ... остальная логика без изменений
 
                     timing = 4
                     delay_notice = 3
@@ -302,21 +300,19 @@ def main_loop():
             for token in to_remove:
                 trade_records.pop(token, None)
 
-                    loop_duration = datetime.datetime.now() - now
-        print(f"[DEBUG] Цикл завершён за {loop_duration.total_seconds():.2f} секунд")
+            loop_duration = datetime.datetime.now() - now
+            print(f"[DEBUG] Цикл завершён за {loop_duration.total_seconds():.2f} секунд")
 
+        except Exception as e:
+            print(f"[ERROR] Ошибка в main_loop: {e}")
+            send_telegram(f"❗️Ошибка в main_loop: {e}")
+
+        # Пауза до следующего запуска
         delay = (next_run - datetime.datetime.now()).total_seconds()
         if delay > 0:
             time.sleep(delay)
-
-        except Exception as e:
-    print(f"[ERROR] Ошибка в main_loop: {e}")
-    send_telegram(f"❗️Ошибка в main_loop: {e}")
-    delay = (next_run - datetime.datetime.now()).total_seconds()
-    if delay > 0:
-        time.sleep(delay)
-    else:
-        time.sleep(60)
+        else:
+            time.sleep(60)
 
 def start_background_loop():
     threading.Thread(target=main_loop, daemon=True).start()
