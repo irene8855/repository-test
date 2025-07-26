@@ -193,115 +193,122 @@ def main_loop():
 
     while True:
         now = datetime.datetime.now()
-        print(f"[DEBUG] Tick at {now}")  # DEBUG: периодический тик
+        try:
+            print(f"[DEBUG] Tick at {now}")  # DEBUG: периодический тик
 
-        for token in TOKENS:
-            if token == "USDT":
-                continue
-
-            print(f"[DEBUG] Проверка токена: {token}")  # DEBUG: токен
-
-            profits = get_profits(token)
-
-            # ✅ Отладка
-            debug_lines = [
-                f"[DEBUG] {token} на {dex}: {round(profit, 2)}%" if profit is not None else f"[DEBUG] {token} на {dex}: нет данных"
-                for dex, profit in profits.items()
-            ]
-            try:
-                debug_message = "\n".join(debug_lines)
-                print(debug_message)
-                if debug_message:
-                    send_telegram(debug_message[:400])  # DEBUG: отправка отладочной информации
-            except Exception as e:
-                print(f"[DEBUG ERROR] {e}")
-
-            if not profits:
-                continue
-
-            max_platform = max(profits, key=profits.get)
-            max_profit = profits[max_platform]
-
-            print(f"[DEBUG] Лучшая платформа для {token}: {max_platform} ({max_profit:.2f}%)")  # DEBUG: платформа
-
-            if max_profit > 1.2:
-                last_sent = notified.get(token, now - datetime.timedelta(minutes=10))
-                if (now - last_sent).total_seconds() < 300:
+            for token in TOKENS:
+                if token == "USDT":
                     continue
 
-                volume, volatility = get_volume_volatility(ROUTERS[max_platform]["router_address"], token)
-                print(f"[DEBUG] Объем: {volume}, Волатильность: {volatility:.4f}")  # DEBUG: объем и волатильность
+                print(f"[DEBUG] Проверка токена: {token}")  # DEBUG: токен
 
-                # ... остальная логика без изменений
+                profits = get_profits(token)
 
-# ... остальная часть файла без изменений
+                # ✅ Отладка
+                debug_lines = [
+                    f"[DEBUG] {token} на {dex}: {round(profit, 2)}%" if profit is not None else f"[DEBUG] {token} на {dex}: нет данных"
+                    for dex, profit in profits.items()
+                ]
+                try:
+                    debug_message = "\n".join(debug_lines)
+                    print(debug_message)
+                    if debug_message:
+                        send_telegram(debug_message[:400])  # DEBUG: отправка отладочной информации
+                except Exception as e:
+                    print(f"[DEBUG ERROR] {e}")
 
-                timing = 4
-                delay_notice = 3
+                if not profits:
+                    continue
 
-                start_time_dt = now + datetime.timedelta(minutes=delay_notice)
-                end_time_dt = start_time_dt + datetime.timedelta(minutes=timing)
-                start_time = start_time_dt.strftime("%H:%M")
-                end_time = end_time_dt.strftime("%H:%M")
+                max_platform = max(profits, key=profits.get)
+                max_profit = profits[max_platform]
 
-                url = build_url(max_platform, token)
+                print(f"[DEBUG] Лучшая платформа для {token}: {max_platform} ({max_profit:.2f}%)")  # DEBUG: платформа
 
-                msg = (
-                    f"📉USDT->{token}->USDT📈\n"
-                    f"PLATFORM: {max_platform}\n"
-                    f"TIMING: {timing} MIN⌛️\n"
-                    f"START TIME: {start_time}\n"
-                    f"SELL TIME: {end_time}\n"
-                    f"ESTIMATED PROFIT: {round(max_profit,2)} % 💸\n"
-                    f"VOLUME (events): {volume}\n"
-                    f"VOLATILITY: {volatility:.4f}\n"
-                    f"TRADE LINK:\n{url}"
-                )
-                send_telegram(msg)
+                if max_profit > 1.2:
+                    last_sent = notified.get(token, now - datetime.timedelta(minutes=10))
+                    if (now - last_sent).total_seconds() < 300:
+                        continue
 
-                notified[token] = now
-                trade_records[token] = {
-                    "start": now,
-                    "profit_estimated": max_profit,
-                    "platform": max_platform,
-                    "volume": volume,
-                    "volatility": volatility,
-                    "start_time": start_time,
-                    "end_time": end_time,
-                    "url": url,
-                }
+                    volume, volatility = get_volume_volatility(ROUTERS[max_platform]["router_address"], token)
+                    print(f"[DEBUG] Объем: {volume}, Волатильность: {volatility:.4f}")  # DEBUG: объем и волатильность
 
-                save_to_csv({
-                    "datetime": now.isoformat(),
-                    "token": token,
-                    "platform": max_platform,
-                    "profit_percent": max_profit,
-                    "volume": volume,
-                    "volatility": volatility
-                })
+                    # ... остальная логика без изменений
 
-        to_remove = []
-        for token, info in trade_records.items():
-            elapsed = (now - info["start"]).total_seconds()
-            if elapsed >= 60 * 4:
-                real_profit = get_profit_on_dex(ROUTERS[info["platform"]]["router_address"], token)
-                if real_profit is not None:
+                    timing = 4
+                    delay_notice = 3
+
+                    start_time_dt = now + datetime.timedelta(minutes=delay_notice)
+                    end_time_dt = start_time_dt + datetime.timedelta(minutes=timing)
+                    start_time = start_time_dt.strftime("%H:%M")
+                    end_time = end_time_dt.strftime("%H:%M")
+
+                    url = build_url(max_platform, token)
+
                     msg = (
-                        f"✅ Результат сделки по {token} на {info['platform']}:\n"
-                        f"Предсказанная прибыль: {round(info['profit_estimated'], 2)} %\n"
-                        f"Реальная прибыль: {round(real_profit, 2)} %\n"
-                        f"Время сделки: {info['start_time']} - {info['end_time']}\n"
-                        f"Объём (events): {info['volume']}\n"
-                        f"Волатильность: {info['volatility']:.4f}\n"
-                        f"Ссылка: {info['url']}"
+                        f"📉USDT->{token}->USDT📈\n"
+                        f"PLATFORM: {max_platform}\n"
+                        f"TIMING: {timing} MIN⌛️\n"
+                        f"START TIME: {start_time}\n"
+                        f"SELL TIME: {end_time}\n"
+                        f"ESTIMATED PROFIT: {round(max_profit,2)} % 💸\n"
+                        f"VOLUME (events): {volume}\n"
+                        f"VOLATILITY: {volatility:.4f}\n"
+                        f"TRADE LINK:\n{url}"
                     )
                     send_telegram(msg)
-                to_remove.append(token)
 
-        for token in to_remove:
-            trade_records.pop(token, None)
+                    notified[token] = now
+                    trade_records[token] = {
+                        "start": now,
+                        "profit_estimated": max_profit,
+                        "platform": max_platform,
+                        "volume": volume,
+                        "volatility": volatility,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "url": url,
+                    }
 
-        time.sleep(20)
+                    save_to_csv({
+                        "datetime": now.isoformat(),
+                        "token": token,
+                        "platform": max_platform,
+                        "profit_percent": max_profit,
+                        "volume": volume,
+                        "volatility": volatility
+                    })
+
+            to_remove = []
+            for token, info in trade_records.items():
+                elapsed = (now - info["start"]).total_seconds()
+                if elapsed >= 60 * 4:
+                    real_profit = get_profit_on_dex(ROUTERS[info["platform"]]["router_address"], token)
+                    if real_profit is not None:
+                        msg = (
+                            f"✅ Результат сделки по {token} на {info['platform']}:\n"
+                            f"Предсказанная прибыль: {round(info['profit_estimated'], 2)} %\n"
+                            f"Реальная прибыль: {round(real_profit, 2)} %\n"
+                            f"Время сделки: {info['start_time']} - {info['end_time']}\n"
+                            f"Объём (events): {info['volume']}\n"
+                            f"Волатильность: {info['volatility']:.4f}\n"
+                            f"Ссылка: {info['url']}"
+                        )
+                        send_telegram(msg)
+                    to_remove.append(token)
+
+            for token in to_remove:
+                trade_records.pop(token, None)
+
+            loop_duration = datetime.datetime.now() - now
+            print(f"[DEBUG] Цикл завершён за {loop_duration.total_seconds():.2f} секунд")
+
+            time.sleep(60)
+
+        except Exception as e:
+            print(f"[ERROR] Ошибка в main_loop: {e}")
+            send_telegram(f"❗️Ошибка в main_loop: {e}")
+            time.sleep(60)
 
 def start_background_loop():
     threading.Thread(target=main_loop, daemon=True).start()
