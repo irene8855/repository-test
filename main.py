@@ -186,43 +186,33 @@ def healthcheck():
 # ========== Main Logic ==========
 
 def main_loop():
-    print("[DEBUG] main_loop стартовал")
-    send_telegram("🟢 main_loop стартовал")
-
     notified = {}
     trade_records = {}
 
-    # ... дальше твой код
-
+    print("[DEBUG] main_loop стартовал")
     send_telegram("🤖 Бот запущен. Ожидаем всплесков прибыли...")
 
     while True:
         try:
             now = datetime.datetime.now()
-            next_run = now + datetime.timedelta(seconds=60)
-
-            print(f"[DEBUG] Tick at {now}")  # DEBUG: периодический тик
+            print(f"[DEBUG] Цикл запущен в {now.strftime('%H:%M:%S')}")
 
             for token in TOKENS:
                 if token == "USDT":
                     continue
 
-                print(f"[DEBUG] Проверка токена: {token}")  # DEBUG: токен
+                print(f"[DEBUG] Проверка токена: {token}")
 
                 profits = get_profits(token)
 
-                # ✅ Отладка
+                # Отладка — только в консоль
                 debug_lines = [
                     f"[DEBUG] {token} на {dex}: {round(profit, 2)}%" if profit is not None else f"[DEBUG] {token} на {dex}: нет данных"
                     for dex, profit in profits.items()
                 ]
-                try:
-                    debug_message = "\n".join(debug_lines)
+                debug_message = "\n".join(debug_lines)
+                if debug_message:
                     print(debug_message)
-                    if debug_message:
-                        send_telegram(debug_message[:400])  # DEBUG: отправка отладочной информации
-                except Exception as e:
-                    print(f"[DEBUG ERROR] {e}")
 
                 if not profits:
                     continue
@@ -230,7 +220,7 @@ def main_loop():
                 max_platform = max(profits, key=profits.get)
                 max_profit = profits[max_platform]
 
-                print(f"[DEBUG] Лучшая платформа для {token}: {max_platform} ({max_profit:.2f}%)")  # DEBUG: платформа
+                print(f"[DEBUG] Лучшая платформа для {token}: {max_platform} ({max_profit:.2f}%)")
 
                 if max_profit > 1.2:
                     last_sent = notified.get(token, now - datetime.timedelta(minutes=10))
@@ -238,7 +228,7 @@ def main_loop():
                         continue
 
                     volume, volatility = get_volume_volatility(ROUTERS[max_platform]["router_address"], token)
-                    print(f"[DEBUG] Объем: {volume}, Волатильность: {volatility:.4f}")  # DEBUG: объем и волатильность
+                    print(f"[DEBUG] Объем: {volume}, Волатильность: {volatility:.4f}")
 
                     timing = 4
                     delay_notice = 3
@@ -284,6 +274,7 @@ def main_loop():
                         "volatility": volatility
                     })
 
+            # Проверяем завершение сделок
             to_remove = []
             for token, info in trade_records.items():
                 elapsed = (now - info["start"]).total_seconds()
@@ -305,22 +296,14 @@ def main_loop():
             for token in to_remove:
                 trade_records.pop(token, None)
 
-            loop_duration = datetime.datetime.now() - now
-            print(f"[DEBUG] Цикл завершён за {loop_duration.total_seconds():.2f} секунд")
+            # Задержка 5 секунд между циклами
+            time.sleep(5)
 
         except Exception as e:
             print(f"[ERROR] Ошибка в main_loop: {e}")
             send_telegram(f"❗️Ошибка в main_loop: {e}")
 
-        # Пауза до следующего запуска
-        delay = (next_run - datetime.datetime.now()).total_seconds()
-        if delay > 0:
-            time.sleep(delay)
-        else:
-            time.sleep(60)
-
 def start_background_loop():
-    print("[DEBUG] 🔁 Вызов start_background_loop()")
+    print("[DEBUG] 🔁 Вызов start_background_loop()
     threading.Thread(target=main_loop, daemon=True).start()
-
-  
+          
