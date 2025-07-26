@@ -192,9 +192,11 @@ def main_loop():
     send_telegram("🤖 Бот запущен. Ожидаем всплесков прибыли...")
 
     while True:
+    try:
         now = datetime.datetime.now()
-        try:
-            print(f"[DEBUG] Tick at {now}")  # DEBUG: периодический тик
+        next_run = now + datetime.timedelta(seconds=60)
+
+        print(f"[DEBUG] Tick at {now}")  # DEBUG: периодический тик
 
             for token in TOKENS:
                 if token == "USDT":
@@ -300,19 +302,21 @@ def main_loop():
             for token in to_remove:
                 trade_records.pop(token, None)
 
-            loop_duration = datetime.datetime.now() - now
-            print(f"[DEBUG] Цикл завершён за {loop_duration.total_seconds():.2f} секунд")
+                    loop_duration = datetime.datetime.now() - now
+        print(f"[DEBUG] Цикл завершён за {loop_duration.total_seconds():.2f} секунд")
 
-            time.sleep(60)
-
-        except Exception as e:
-            print(f"[ERROR] Ошибка в main_loop: {e}")
-            send_telegram(f"❗️Ошибка в main_loop: {e}")
-
-        # ⏳ Ждать до следующего цикла точно 60 секунд
         delay = (next_run - datetime.datetime.now()).total_seconds()
         if delay > 0:
             time.sleep(delay)
+
+        except Exception as e:
+    print(f"[ERROR] Ошибка в main_loop: {e}")
+    send_telegram(f"❗️Ошибка в main_loop: {e}")
+    delay = (next_run - datetime.datetime.now()).total_seconds()
+    if delay > 0:
+        time.sleep(delay)
+    else:
+        time.sleep(60)
 
 def start_background_loop():
     threading.Thread(target=main_loop, daemon=True).start()
