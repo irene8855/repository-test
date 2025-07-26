@@ -173,6 +173,8 @@ def save_to_csv(data):
         df = pd.concat([df_existing, df], ignore_index=True)
     df.to_csv(filename, index=False)
 
+# ... начало файла без изменений
+
 # ========== Flask ==========
 
 app = Flask(__name__)
@@ -191,10 +193,13 @@ def main_loop():
 
     while True:
         now = datetime.datetime.now()
+        print(f"[DEBUG] Tick at {now}")  # DEBUG: периодический тик
 
         for token in TOKENS:
             if token == "USDT":
                 continue
+
+            print(f"[DEBUG] Проверка токена: {token}")  # DEBUG: токен
 
             profits = get_profits(token)
 
@@ -207,7 +212,7 @@ def main_loop():
                 debug_message = "\n".join(debug_lines)
                 print(debug_message)
                 if debug_message:
-                    send_telegram(debug_message[:400])
+                    send_telegram(debug_message[:400])  # DEBUG: отправка отладочной информации
             except Exception as e:
                 print(f"[DEBUG ERROR] {e}")
 
@@ -217,12 +222,19 @@ def main_loop():
             max_platform = max(profits, key=profits.get)
             max_profit = profits[max_platform]
 
+            print(f"[DEBUG] Лучшая платформа для {token}: {max_platform} ({max_profit:.2f}%)")  # DEBUG: платформа
+
             if max_profit > 1.2:
                 last_sent = notified.get(token, now - datetime.timedelta(minutes=10))
                 if (now - last_sent).total_seconds() < 300:
                     continue
 
                 volume, volatility = get_volume_volatility(ROUTERS[max_platform]["router_address"], token)
+                print(f"[DEBUG] Объем: {volume}, Волатильность: {volatility:.4f}")  # DEBUG: объем и волатильность
+
+                # ... остальная логика без изменений
+
+# ... остальная часть файла без изменений
 
                 timing = 4
                 delay_notice = 3
