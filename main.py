@@ -304,6 +304,6 @@ def main_loop():
             send_telegram(f"❗️Ошибка в main_loop: {e}")
 
 def start_background_loop():
-    print("[DEBUG] 🔁 Вызов start_background_loop()
+    print("[DEBUG] 🔁 Вызов start_background_loop()")
     threading.Thread(target=main_loop, daemon=True).start()
           
