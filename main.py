@@ -308,7 +308,11 @@ def main_loop():
         except Exception as e:
             print(f"[ERROR] Ошибка в main_loop: {e}")
             send_telegram(f"❗️Ошибка в main_loop: {e}")
-            time.sleep(60)
+
+        # ⏳ Ждать до следующего цикла точно 60 секунд
+        delay = (next_run - datetime.datetime.now()).total_seconds()
+        if delay > 0:
+            time.sleep(delay)
 
 def start_background_loop():
     threading.Thread(target=main_loop, daemon=True).start()
