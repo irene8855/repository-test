@@ -186,8 +186,13 @@ def healthcheck():
 # ========== Main Logic ==========
 
 def main_loop():
+    print("[DEBUG] main_loop стартовал")
+    send_telegram("🟢 main_loop стартовал")
+
     notified = {}
     trade_records = {}
+
+    # ... дальше твой код
 
     send_telegram("🤖 Бот запущен. Ожидаем всплесков прибыли...")
 
@@ -315,6 +320,7 @@ def main_loop():
             time.sleep(60)
 
 def start_background_loop():
+    print("[DEBUG] 🔁 Вызов start_background_loop()")
     threading.Thread(target=main_loop, daemon=True).start()
 
   
