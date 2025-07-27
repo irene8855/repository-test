@@ -192,7 +192,7 @@ def main_loop():
     trade_records = {}
 
     print("[DEBUG] main_loop стартовал")
-    send_telegram("🤖 Бот запущен. Ожидаем всплесков прибыли...")
+    send_telegram("🤖 Бот запущен. Диагностический режим активирован.")
 
     while True:
         try:
@@ -205,37 +205,54 @@ def main_loop():
 
                 print(f"[DEBUG] Проверка токена: {token}")
 
-                profits = get_profits(token)
-                if not profits:
+                try:
+                    profits = get_profits(token)
+                except Exception as e:
+                    msg = f"❗️Ошибка в get_profits({token}): {e}"
+                    print(msg)
+                    send_telegram(msg)
                     continue
 
+                # Вывод прибыли в консоль
                 debug_lines = [
                     f"[DEBUG] {token} на {dex}: {round(profit, 2)}%" if profit is not None else f"[DEBUG] {token} на {dex}: нет данных"
                     for dex, profit in profits.items()
                 ]
-                print("\n".join(debug_lines))
+                debug_message = "\n".join(debug_lines)
+                if debug_message:
+                    print(debug_message)
+
+                if not profits:
+                    continue
 
                 max_platform = max(profits, key=profits.get)
                 max_profit = profits[max_platform]
-                print(f"[DEBUG] Лучшая платформа для {token}: {max_platform} ({max_profit:.2f}%)")
 
-                profit_values = [p for p in profits.values() if p is not None]
-                median_profit = np.median(profit_values)
-                volatility = get_price_history_volatility(token) or 0
+                # 🔧 Адаптивный порог
+                try:
+                    _, volatility = get_volume_volatility(ROUTERS[max_platform]["router_address"], token)
+                except Exception as e:
+                    msg = f"❗️Ошибка в get_volume_volatility({token}): {e}"
+                    print(msg)
+                    send_telegram(msg)
+                    volatility = 0.01
 
-                adaptive_threshold = median_profit + volatility * 0.6
-                almost_threshold = adaptive_threshold - 0.5
+                base_threshold = 1.0
+                volatility_factor = volatility * 8
+                adaptive_threshold = round(base_threshold + volatility_factor, 2)
 
-                print(f"[DEBUG] Адаптивный порог для {token}: {adaptive_threshold:.2f}%")
-
-                last_sent = notified.get(token, now - datetime.timedelta(minutes=10))
-                if (now - last_sent).total_seconds() < 300:
-                    continue
+                print(
+                    f"[DEBUG] {token} → {max_platform}: "
+                    f"profit={round(max_profit,2)}%, "
+                    f"adaptive_threshold={adaptive_threshold}%"
+                )
 
                 if max_profit >= adaptive_threshold:
-                    # Выгодная сделка
-                    volume, volatility = get_volume_volatility(ROUTERS[max_platform]["router_address"], token)
-                    print(f"[DEBUG] Объём: {volume}, Волатильность: {volatility:.4f}")
+                    last_sent = notified.get(token, now - datetime.timedelta(minutes=10))
+                    if (now - last_sent).total_seconds() < 300:
+                        continue
+
+                    volume, _ = get_volume_volatility(ROUTERS[max_platform]["router_address"], token)
 
                     timing = 4
                     delay_notice = 3
@@ -248,15 +265,15 @@ def main_loop():
                     url = build_url(max_platform, token)
 
                     msg = (
-                        f"📉USDT->{token}->USDT📈\n"
+                        f"📉USDT→{token}→USDT📈\n"
                         f"PLATFORM: {max_platform}\n"
                         f"TIMING: {timing} MIN⌛️\n"
                         f"START TIME: {start_time}\n"
                         f"SELL TIME: {end_time}\n"
-                        f"ESTIMATED PROFIT: {round(max_profit,2)} % 💸\n"
+                        f"ESTIMATED PROFIT: {round(max_profit,2)}% 💸\n"
+                        f"ADAPTIVE THRESHOLD: {adaptive_threshold}%\n"
                         f"VOLUME (events): {volume}\n"
                         f"VOLATILITY: {volatility:.4f}\n"
-                        f"ADAPTIVE THRESHOLD: {adaptive_threshold:.2f} %\n"
                         f"TRADE LINK:\n{url}"
                     )
                     send_telegram(msg)
@@ -282,18 +299,14 @@ def main_loop():
                         "volatility": volatility
                     })
 
-                elif max_profit >= almost_threshold:
-                    # Почти выгодная
-                    url = build_url(max_platform, token)
-                    msg = (
-                        f"🟡 Почти выгодная сделка ({token}) на {max_platform}\n"
-                        f"Профит: {round(max_profit, 2)} %, Порог: {round(adaptive_threshold, 2)} %\n"
-                        f"Ссылка: {url}"
+                elif max_profit >= adaptive_threshold * 0.8:
+                    # 📌 Почти сигнал
+                    send_telegram(
+                        f"⚠️ Почти сигнал по {token} ({max_platform})\n"
+                        f"Прибыль: {round(max_profit,2)}% (порог {adaptive_threshold}%)"
                     )
-                    send_telegram(msg)
-                    notified[token] = now
 
-            # Проверяем завершение сделок
+            # Проверка завершения сделок
             to_remove = []
             for token, info in trade_records.items():
                 elapsed = (now - info["start"]).total_seconds()
@@ -302,9 +315,9 @@ def main_loop():
                     if real_profit is not None:
                         msg = (
                             f"✅ Результат сделки по {token} на {info['platform']}:\n"
-                            f"Предсказанная прибыль: {round(info['profit_estimated'], 2)} %\n"
-                            f"Реальная прибыль: {round(real_profit, 2)} %\n"
-                            f"Время сделки: {info['start_time']} - {info['end_time']}\n"
+                            f"Предсказанная прибыль: {round(info['profit_estimated'], 2)}%\n"
+                            f"Реальная прибыль: {round(real_profit, 2)}%\n"
+                            f"Время сделки: {info['start_time']} – {info['end_time']}\n"
                             f"Объём (events): {info['volume']}\n"
                             f"Волатильность: {info['volatility']:.4f}\n"
                             f"Ссылка: {info['url']}"
@@ -318,8 +331,9 @@ def main_loop():
             time.sleep(5)
 
         except Exception as e:
-            print(f"[ERROR] Ошибка в main_loop: {e}")
-            send_telegram(f"❗️Ошибка в main_loop: {e}")
+            err = f"❗️Ошибка в main_loop: {e}"
+            print(err)
+            send_telegram(err)
 
 def start_background_loop():
     print("[DEBUG] 🔁 Вызов start_background_loop()")
