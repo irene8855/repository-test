@@ -185,6 +185,8 @@ def healthcheck():
 
 # ========== Main Logic ==========
 
+import numpy as np  # добавь наверх, если ещё не импортировал
+
 def main_loop():
     notified = {}
     trade_records = {}
@@ -204,31 +206,36 @@ def main_loop():
                 print(f"[DEBUG] Проверка токена: {token}")
 
                 profits = get_profits(token)
+                if not profits:
+                    continue
 
-                # Отладка — только в консоль
                 debug_lines = [
                     f"[DEBUG] {token} на {dex}: {round(profit, 2)}%" if profit is not None else f"[DEBUG] {token} на {dex}: нет данных"
                     for dex, profit in profits.items()
                 ]
-                debug_message = "\n".join(debug_lines)
-                if debug_message:
-                    print(debug_message)
-
-                if not profits:
-                    continue
+                print("\n".join(debug_lines))
 
                 max_platform = max(profits, key=profits.get)
                 max_profit = profits[max_platform]
-
                 print(f"[DEBUG] Лучшая платформа для {token}: {max_platform} ({max_profit:.2f}%)")
 
-                if max_profit > 1.2:
-                    last_sent = notified.get(token, now - datetime.timedelta(minutes=10))
-                    if (now - last_sent).total_seconds() < 300:
-                        continue
+                profit_values = [p for p in profits.values() if p is not None]
+                median_profit = np.median(profit_values)
+                volatility = get_price_history_volatility(token) or 0
 
+                adaptive_threshold = median_profit + volatility * 0.6
+                almost_threshold = adaptive_threshold - 0.5
+
+                print(f"[DEBUG] Адаптивный порог для {token}: {adaptive_threshold:.2f}%")
+
+                last_sent = notified.get(token, now - datetime.timedelta(minutes=10))
+                if (now - last_sent).total_seconds() < 300:
+                    continue
+
+                if max_profit >= adaptive_threshold:
+                    # Выгодная сделка
                     volume, volatility = get_volume_volatility(ROUTERS[max_platform]["router_address"], token)
-                    print(f"[DEBUG] Объем: {volume}, Волатильность: {volatility:.4f}")
+                    print(f"[DEBUG] Объём: {volume}, Волатильность: {volatility:.4f}")
 
                     timing = 4
                     delay_notice = 3
@@ -249,6 +256,7 @@ def main_loop():
                         f"ESTIMATED PROFIT: {round(max_profit,2)} % 💸\n"
                         f"VOLUME (events): {volume}\n"
                         f"VOLATILITY: {volatility:.4f}\n"
+                        f"ADAPTIVE THRESHOLD: {adaptive_threshold:.2f} %\n"
                         f"TRADE LINK:\n{url}"
                     )
                     send_telegram(msg)
@@ -274,6 +282,17 @@ def main_loop():
                         "volatility": volatility
                     })
 
+                elif max_profit >= almost_threshold:
+                    # Почти выгодная
+                    url = build_url(max_platform, token)
+                    msg = (
+                        f"🟡 Почти выгодная сделка ({token}) на {max_platform}\n"
+                        f"Профит: {round(max_profit, 2)} %, Порог: {round(adaptive_threshold, 2)} %\n"
+                        f"Ссылка: {url}"
+                    )
+                    send_telegram(msg)
+                    notified[token] = now
+
             # Проверяем завершение сделок
             to_remove = []
             for token, info in trade_records.items():
@@ -296,7 +315,6 @@ def main_loop():
             for token in to_remove:
                 trade_records.pop(token, None)
 
-            # Задержка 5 секунд между циклами
             time.sleep(5)
 
         except Exception as e:
@@ -306,4 +324,4 @@ def main_loop():
 def start_background_loop():
     print("[DEBUG] 🔁 Вызов start_background_loop()")
     threading.Thread(target=main_loop, daemon=True).start()
-          
+    
