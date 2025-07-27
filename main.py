@@ -45,7 +45,13 @@ TOKENS = {
     "GMT": web3.to_checksum_address("0x5fE80d2CD054645b9419657d3d10d26391780A7B"),
     "Link": web3.to_checksum_address("0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39"),
     "SAND": web3.to_checksum_address("0xbbba073c31bf03b8acf7c28ef0738decf3695683"),
-    "EMT": web3.to_checksum_address("0x6bE7E4A2202cB6E60ef3F94d27a65b906FdA7D86")
+    "EMT": web3.to_checksum_address("0x6bE7E4A2202cB6E60ef3F94d27a65b906FdA7D86"),
+
+    "WMATIC": web3.to_checksum_address("0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270"),
+    "DAI": web3.to_checksum_address("0x8f3cf7ad23cd3cadbd9735aff958023239c6a063"),
+    "USDC": web3.to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"),
+    "tBTC": web3.to_checksum_address("0x2d8e5b2b51f5c64d760a2cfc0f29f13f4ebf17a1"),
+    "SUSHI": web3.to_checksum_address("0x0b3f868e0be5597d5db7feb59e1cadbb0fdda50a")
 }
 
 GET_AMOUNTS_OUT_ABI = '[{"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"}],"name":"getAmountsOut","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"}]'
