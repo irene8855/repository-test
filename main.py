@@ -122,10 +122,17 @@ def get_profit_on_dex(router_address, token_symbol):
         contract = web3.eth.contract(address=router_address, abi=GET_AMOUNTS_OUT_ABI)
         path = [TOKENS["USDT"], TOKENS[token_symbol], TOKENS["USDT"]]
         amount_in = 10**6  # 1 USDT
+
+        print(f"[DIAG] getAmountsOut() path: {path}")
+
         result = contract.functions.getAmountsOut(amount_in, path).call()
+
+        print(f"[DIAG] getAmountsOut() вернул: {result}")
+
         profit_percent = (result[-1] / 1e6 - 1) * 100
         return profit_percent
-    except Exception:
+    except Exception as e:
+        print(f"[ERROR] ❌ get_profit_on_dex() ошибка: {e}")
         return None
 
 def get_volume_volatility(router_address, token_symbol):
@@ -148,13 +155,26 @@ def get_volume_volatility(router_address, token_symbol):
 
 def get_profits(token_symbol):
     profits = {}
+    print(f"[DIAG] 🔍 Старт get_profits() для {token_symbol}")
+    
     for dex_name, dex_info in ROUTERS.items():
-        if dex_name == "SushiSwap":
-            profit = get_profit_on_sushiswap_subgraph(token_symbol)
-        else:
-            profit = get_profit_on_dex(dex_info["router_address"], token_symbol)
-        if profit is not None:
-            profits[dex_name] = profit
+        try:
+            if dex_name == "SushiSwap":
+                print(f"[DIAG] Запрос через subgraph: {dex_name}")
+                profit = get_profit_on_sushiswap_subgraph(token_symbol)
+            else:
+                print(f"[DIAG] Запрос через getAmountsOut: {dex_name}")
+                profit = get_profit_on_dex(dex_info["router_address"], token_symbol)
+
+            if profit is not None:
+                print(f"[DIAG] ✅ Прибыль на {dex_name} для {token_symbol}: {round(profit, 2)}%")
+                profits[dex_name] = profit
+            else:
+                print(f"[DIAG] ⚠️ Нет прибыли на {dex_name} для {token_symbol}")
+        except Exception as e:
+            print(f"[ERROR] ❌ Ошибка получения прибыли на {dex_name}: {e}")
+    
+    print(f"[DIAG] 🧾 Итог по {token_symbol}: {profits}")
     return profits
 
 def build_url(platform, token_symbol):
