@@ -101,28 +101,6 @@ def get_price_history_volatility(token_symbol):
         print(f"Volatility fetch error: {e}")
     return 0
 
-def get_profit_on_sushiswap_subgraph(token_symbol):
-    token_addr = TOKENS[token_symbol].lower()
-    query = """
-    query ($token: String!) {
-      token(id: $token) {
-        derivedETH
-      }
-      bundle(id:"1") {
-        ethPrice
-      }
-    }
-    """
-    variables = {"token": token_addr}
-    data = graphql_query(query, variables)
-    if data and "data" in data and data["data"]["token"]:
-        token_price_eth = float(data["data"]["token"]["derivedETH"])
-        eth_price_usd = float(data["data"]["bundle"]["ethPrice"])
-        token_price_usd = token_price_eth * eth_price_usd
-        profit_percent = token_price_usd * 100 / 1000  # условная формула
-        return profit_percent
-    return None
-
 def get_profit_on_dex(router_address, token_symbol):
     try:
         contract = web3.eth.contract(address=router_address, abi=GET_AMOUNTS_OUT_ABI)
@@ -165,12 +143,8 @@ def get_profits(token_symbol):
     
     for dex_name, dex_info in ROUTERS.items():
         try:
-            if dex_name == "SushiSwap":
-                print(f"[DIAG] Запрос через subgraph: {dex_name}")
-                profit = get_profit_on_sushiswap_subgraph(token_symbol)
-            else:
-                print(f"[DIAG] Запрос через getAmountsOut: {dex_name}")
-                profit = get_profit_on_dex(dex_info["router_address"], token_symbol)
+            print(f"[DIAG] Запрос через getAmountsOut: {dex_name}")
+            profit = get_profit_on_dex(dex_info["router_address"], token_symbol)
 
             if profit is not None:
                 print(f"[DIAG] ✅ Прибыль на {dex_name} для {token_symbol}: {round(profit, 2)}%")
