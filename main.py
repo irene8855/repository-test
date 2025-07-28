@@ -328,16 +328,24 @@ def main_loop():
                 if elapsed >= 60 * 4:
                     real_profit = get_profit_on_dex(ROUTERS[info["platform"]]["router_address"], token)
                     if real_profit is not None:
-                        msg = (
-                            f"✅ Результат сделки по {token} на {info['platform']}:\n"
-                            f"Предсказанная прибыль: {round(info['profit_estimated'], 2)}%\n"
-                            f"Реальная прибыль: {round(real_profit, 2)}%\n"
-                            f"Время сделки: {info['start_time']} – {info['end_time']}\n"
-                            f"Объём (events): {info['volume']}\n"
-                            f"Волатильность: {info['volatility']:.4f}\n"
-                            f"Ссылка: {info['url']}"
-                        )
-                        send_telegram(msg)
+    msg = (
+        f"✅ Результат сделки по {token} на {info['platform']}:\n"
+        f"Предсказанная прибыль: {round(info['profit_estimated'], 2)}%\n"
+        f"Реальная прибыль: {round(real_profit, 2)}%\n"
+        f"Время сделки: {info['start_time']} – {info['end_time']}\n"
+        f"Объём (events): {info['volume']}\n"
+        f"Волатильность: {info['volatility']:.4f}\n"
+        f"Ссылка: {info['url']}"
+    )
+else:
+    msg = (
+        f"⚠️ Сделка по {token} на {info['platform']} завершилась, но реальная прибыль не определена.\n"
+        f"Предсказанная: {round(info['profit_estimated'], 2)}%\n"
+        f"Время сделки: {info['start_time']} – {info['end_time']}\n"
+        f"Ссылка: {info['url']}"
+    )
+send_telegram(msg)
+
                     to_remove.append(token)
 
             for token in to_remove:
