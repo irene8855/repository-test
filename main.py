@@ -322,11 +322,9 @@ def main_loop():
                     )
 
             # Проверка завершения сделок
-            def main_loop():
+def main_loop():
     while True:
         try:
-            now = datetime.now()
-            # Проверка завершения сделок
             to_remove = []
             for token, info in trade_records.items():
                 elapsed = (now - info["start"]).total_seconds()
@@ -344,8 +342,7 @@ def main_loop():
                         )
                     else:
                         msg = (
-                            f"⚠️ Сделка по {token} на {info['platform']} завершилась, "
-                            f"но реальная прибыль не определена.\n"
+                            f"⚠️ Сделка по {token} на {info['platform']} завершилась, но реальная прибыль не определена.\n"
                             f"Предсказанная: {round(info['profit_estimated'], 2)}%\n"
                             f"Время сделки: {info['start_time']} – {info['end_time']}\n"
                             f"Ссылка: {info['url']}"
