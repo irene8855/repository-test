@@ -104,17 +104,32 @@ def get_price_history_volatility(token_symbol):
 def get_profit_on_dex(router_address, token_symbol):
     try:
         contract = web3.eth.contract(address=router_address, abi=GET_AMOUNTS_OUT_ABI)
-        path = [TOKENS["USDT"], TOKENS[token_symbol], TOKENS["USDT"]]
         amount_in = 10**6  # 1 USDT
+        usdt = TOKENS["USDT"]
+        token = TOKENS[token_symbol]
+        wmatic = TOKENS["WMATIC"]
 
-        print(f"[DIAG] getAmountsOut() path: {path}")
+        paths = [
+            [usdt, token, usdt],             # основной маршрут
+            [usdt, token],                   # прямой
+            [token, usdt],                   # обратный
+            [usdt, wmatic, token, usdt],     # через WMATIC
+        ]
 
-        result = contract.functions.getAmountsOut(amount_in, path).call()
+        for path in paths:
+            try:
+                print(f"[DIAG] getAmountsOut() path: {path}")
+                result = contract.functions.getAmountsOut(amount_in, path).call()
+                if result[-1] > 0:
+                    profit_percent = (result[-1] / amount_in - 1) * 100
+                    return profit_percent
+            except Exception as e:
+                print(f"[SKIP] ⛔ Маршрут не работает: {path} — {e}")
+                continue
 
-        print(f"[DIAG] getAmountsOut() вернул: {result}")
+        print(f"[DIAG] ⚠️ Все маршруты не дали результата для {token_symbol}")
+        return None
 
-        profit_percent = (result[-1] / 1e6 - 1) * 100
-        return profit_percent
     except Exception as e:
         print(f"[ERROR] ❌ get_profit_on_dex() ошибка: {e}")
         return None
