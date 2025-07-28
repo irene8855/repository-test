@@ -326,8 +326,8 @@ def main_loop():
     while True:
         try:
             now = datetime.now()
+            # Проверка завершения сделок
             to_remove = []
-
             for token, info in trade_records.items():
                 elapsed = (now - info["start"]).total_seconds()
                 if elapsed >= 60 * 4:
@@ -344,12 +344,12 @@ def main_loop():
                         )
                     else:
                         msg = (
-                            f"⚠️ Сделка по {token} на {info['platform']} завершилась, но реальная прибыль не определена.\n"
+                            f"⚠️ Сделка по {token} на {info['platform']} завершилась, "
+                            f"но реальная прибыль не определена.\n"
                             f"Предсказанная: {round(info['profit_estimated'], 2)}%\n"
                             f"Время сделки: {info['start_time']} – {info['end_time']}\n"
                             f"Ссылка: {info['url']}"
                         )
-
                     send_telegram(msg)
                     to_remove.append(token)
 
@@ -362,6 +362,7 @@ def main_loop():
             err = f"❗️Ошибка в main_loop: {e}"
             print(err)
             send_telegram(err)
+
 
 def start_background_loop():
     print("[DEBUG] 🔁 Вызов start_background_loop()")
