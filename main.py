@@ -190,8 +190,9 @@ def save_to_csv(data):
 
 # ... начало файла без изменений
 
-# ========== Flask ==========
+import numpy as np  # перенесён в начало
 
+# ========== Flask ==========
 app = Flask(__name__)
 
 @app.route("/")
@@ -199,8 +200,6 @@ def healthcheck():
     return "✅ Bot is running", 200
 
 # ========== Main Logic ==========
-
-import numpy as np  # добавь наверх, если ещё не импортировал
 
 def main_loop():
     notified = {}
@@ -228,7 +227,6 @@ def main_loop():
                     send_telegram(msg)
                     continue
 
-                # Вывод прибыли в консоль
                 debug_lines = [
                     f"[DEBUG] {token} на {dex}: {round(profit, 2)}%" if profit is not None else f"[DEBUG] {token} на {dex}: нет данных"
                     for dex, profit in profits.items()
@@ -243,7 +241,6 @@ def main_loop():
                 max_platform = max(profits, key=profits.get)
                 max_profit = profits[max_platform]
 
-                # 🔧 Адаптивный порог
                 try:
                     _, volatility = get_volume_volatility(ROUTERS[max_platform]["router_address"], token)
                 except Exception as e:
@@ -315,16 +312,12 @@ def main_loop():
                     })
 
                 elif max_profit >= adaptive_threshold * 0.8:
-                    # 📌 Почти сигнал
                     send_telegram(
                         f"⚠️ Почти сигнал по {token} ({max_platform})\n"
                         f"Прибыль: {round(max_profit,2)}% (порог {adaptive_threshold}%)"
                     )
 
             # Проверка завершения сделок
-def main_loop():
-    while True:
-        try:
             to_remove = []
             for token, info in trade_records.items():
                 elapsed = (now - info["start"]).total_seconds()
@@ -359,7 +352,6 @@ def main_loop():
             err = f"❗️Ошибка в main_loop: {e}"
             print(err)
             send_telegram(err)
-
 
 def start_background_loop():
     print("[DEBUG] 🔁 Вызов start_background_loop()")
