@@ -328,7 +328,7 @@ def main_loop():
                 if elapsed >= 60 * 4:
                     real_profit = get_profit_on_dex(ROUTERS[info["platform"]]["router_address"], token)
                     if real_profit is not None:
-    msg = (
+                        msg = (
         f"✅ Результат сделки по {token} на {info['platform']}:\n"
         f"Предсказанная прибыль: {round(info['profit_estimated'], 2)}%\n"
         f"Реальная прибыль: {round(real_profit, 2)}%\n"
