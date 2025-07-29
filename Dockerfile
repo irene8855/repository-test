@@ -16,4 +16,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["gunicorn", "wsgi:application", "-b", "0.0.0.0:8080", "--worker-class", "gthread", "--threads", "4"]
+CMD ["python", "main.py"]
