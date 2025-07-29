@@ -255,7 +255,9 @@ def main_loop():
 
                 if not profits:
                     continue
-
+                    
+                    time.sleep(10)
+                    
                 except Exception as e:
                     print(f"[FATAL ERROR] Ошибка в основном цикле: {e}")
                     send_telegram(f"🔥 Критическая ошибка: {e}")
