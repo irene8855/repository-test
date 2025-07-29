@@ -6,8 +6,7 @@ import requests
 import pandas as pd
 from web3 import Web3
 from dotenv import load_dotenv
-
-# Flask и threading
+import numpy as np
 from flask import Flask
 import threading
 
@@ -46,7 +45,6 @@ TOKENS = {
     "Link": web3.to_checksum_address("0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39"),
     "SAND": web3.to_checksum_address("0xbbba073c31bf03b8acf7c28ef0738decf3695683"),
     "EMT": web3.to_checksum_address("0x6bE7E4A2202cB6E60ef3F94d27a65b906FdA7D86"),
-
     "WMATIC": web3.to_checksum_address("0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270"),
     "DAI": web3.to_checksum_address("0x8f3cf7ad23cd3cadbd9735aff958023239c6a063"),
     "USDC": web3.to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"),
@@ -92,7 +90,6 @@ def get_price_history_volatility(token_symbol):
     """
     variables = {"token": token_addr}
     data = graphql_query(query, variables)
-
     try:
         prices = [float(p["priceUSD"]) for p in data["data"]["token"]["tokenDayData"] if p["priceUSD"]]
         if len(prices) > 1:
@@ -104,46 +101,45 @@ def get_price_history_volatility(token_symbol):
 def get_profit_on_dex(router_address, token_symbol):
     try:
         contract = web3.eth.contract(address=router_address, abi=GET_AMOUNTS_OUT_ABI)
-        amount_in = 10**6  # 1 USDT
+        amount_in = 10**6
         usdt = TOKENS["USDT"]
         token = TOKENS[token_symbol]
         wmatic = TOKENS["WMATIC"]
 
         paths = [
-            [usdt, token, usdt],               # основной маршрут
-            [usdt, token],                     # прямой
-            [token, usdt],                     # обратный
-            [usdt, wmatic, token, usdt],       # через WMATIC
-            [usdt, token, wmatic, usdt],       # токен через WMATIC обратно
-            [usdt, wmatic, token],             # прямой через WMATIC
-            [token, wmatic, usdt]              # обратный через WMATIC
+            [usdt, token, usdt],
+            [usdt, token],
+            [token, usdt],
+            [usdt, wmatic, token, usdt],
+            [usdt, token, wmatic, usdt],
+            [usdt, wmatic, token],
+            [token, wmatic, usdt]
         ]
 
-for path in paths:
-    try:
-        print(f"[DEBUG] ➡️ Проверка маршрута: {path}")
-        result = contract.functions.getAmountsOut(amount_in, path).call()
+        for path in paths:
+            try:
+                print(f"[DEBUG] ➡️ Проверка маршрута: {path}")
+                result = contract.functions.getAmountsOut(amount_in, path).call()
 
-        if result[-1] > 0:
-        profit_percent = (result[-1] / amount_in - 1) * 100
-        print(f"[DIAG] 📈 profit_percent по маршруту {path}: {profit_percent:.4f}%")
+                if result[-1] > 0:
+                    profit_percent = (result[-1] / amount_in - 1) * 100
+                    print(f"[DIAG] 📈 profit_percent по маршруту {path}: {profit_percent:.4f}%")
 
-        # ✅ Тестовая отправка в Telegram при профите больше 0.5%
-        if profit_percent > 0.5:
-            message = (
-                f"🚨 Тестовый сигнал\n"
-                f"Токен: {token_symbol}\n"
-                f"Путь: {path}\n"
-                f"Профит: {profit_percent:.2f}%"
-            )
-            send_telegram_message(message)
+                    if profit_percent > 0.5:
+                        message = (
+                            f"🚨 Тестовый сигнал\n"
+                            f"Токен: {token_symbol}\n"
+                            f"Путь: {path}\n"
+                            f"Профит: {profit_percent:.2f}%"
+                        )
+                        send_telegram(message)
 
-        if profit_percent > 0:
-            return profit_percent
+                    if profit_percent > 0:
+                        return profit_percent
 
-    except Exception as e:
-        print(f"[SKIP] ⛔ Маршрут не работает: {path} — {e}")
-        continue
+            except Exception as e:
+                print(f"[SKIP] ⛔ Маршрут не работает: {path} — {e}")
+                continue
 
         print(f"[DIAG] ⚠️ Все маршруты не дали результата для {token_symbol}")
         return None
@@ -256,11 +252,6 @@ def main_loop():
                 if not profits:
                     time.sleep(10)
                     continue
-                    
-                except Exception as e:
-                    print(f"[FATAL ERROR] Ошибка в основном цикле: {e}")
-                    send_telegram(f"🔥 Критическая ошибка: {e}")
-                    time.sleep(10)
 
                 max_platform = max(profits, key=profits.get)
                 max_profit = profits[max_platform]
@@ -384,3 +375,4 @@ def start_background_loop():
 if __name__ == "__main__":
     start_background_loop()
     app.run(host="0.0.0.0", port=8080)
+        
