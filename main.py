@@ -1,3 +1,4 @@
+# Все импорты остаются те же, кроме Flask и Thread
 import os
 import time
 import datetime
@@ -6,20 +7,15 @@ import json
 import pandas as pd
 from web3 import Web3
 from dotenv import load_dotenv
-import threading
-from flask import Flask
-from threading import Thread
 
-# Load secrets
+# Загрузка переменных
 load_dotenv("secrets.env")
 POLYGON_RPC = os.getenv("POLYGON_RPC")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Init Web3
 web3 = Web3(Web3.HTTPProvider(POLYGON_RPC))
 
-# DEX Routers
 ROUTERS = {
     "Uniswap": {
         "router_address": web3.to_checksum_address("0xE592427A0AEce92De3Edee1F18E0157C05861564"),
@@ -35,7 +31,6 @@ ROUTERS = {
     }
 }
 
-# Tokens
 TOKENS = {
     "USDT": web3.to_checksum_address("0xc2132D05D31c914a87C6611C10748AaCbA6cD43E"),
     "DAI": web3.to_checksum_address("0x8f3cf7ad23cd3cadbd9735aff958023239c6a063"),
@@ -48,10 +43,8 @@ TOKENS = {
     "SAND": web3.to_checksum_address("0xbbba073c31bf03b8acf7c28ef0738decf3695683"),
 }
 
-# ABI
 GET_AMOUNTS_OUT_ABI = '[{"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"}],"name":"getAmountsOut","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"}]'
 
-# Telegram
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
@@ -60,11 +53,10 @@ def send_telegram(message):
     except Exception as e:
         print(f"Telegram error: {e}")
 
-# Calculate profit via getAmountsOut
 def calculate_profit(router_address, token):
     try:
         contract = web3.eth.contract(address=router_address, abi=GET_AMOUNTS_OUT_ABI)
-        amount_in = 10**6  # 1 USDT
+        amount_in = 10**6
         path = [TOKENS["USDT"], TOKENS[token], TOKENS["USDT"]]
         result = contract.functions.getAmountsOut(amount_in, path).call()
         amount_out = result[-1]
@@ -75,7 +67,6 @@ def calculate_profit(router_address, token):
     except:
         return None
 
-# Save log
 def log_trade(data):
     file = "historical.csv"
     df = pd.DataFrame([data])
@@ -84,21 +75,19 @@ def log_trade(data):
         df = pd.concat([df_old, df], ignore_index=True)
     df.to_csv(file, index=False)
 
-# Build URL
 def build_url(platform, token):
     if platform == "1inch":
         return ROUTERS[platform]["url"].format("USDT", token)
     else:
         return ROUTERS[platform]["url"].format("USDT", TOKENS[token])
 
-# Bot main loop
 def main():
     print("✅ Bot started")
     send_telegram("🤖 Бот запущен и следит за рынком")
 
     tracked = {}
     min_profit = 1.1
-    trade_duration = 4 * 60  # seconds
+    trade_duration = 4 * 60
 
     while True:
         now = datetime.datetime.now()
@@ -137,7 +126,6 @@ def main():
                     "url": url
                 }
 
-        # Check real result
         for key, info in list(tracked.items()):
             elapsed = (now - info["start"]).total_seconds()
             if elapsed >= trade_duration:
@@ -167,22 +155,6 @@ def main():
 
         time.sleep(10)
 
-# Run lightweight Flask server in a thread
-flask_app = Flask(__name__)
-
-@flask_app.route("/")
-def health_check():
-    return "Bot is running", 200
-
-def run_flask():
-    flask_app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
-
 if __name__ == "__main__":
-    # Запускаем Flask в фоне
-    flask_thread = Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
-
-    # Запускаем торгового бота
     main()
     
