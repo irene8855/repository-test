@@ -256,10 +256,10 @@ def main_loop():
                 if not profits:
                     continue
 
-except Exception as e:
-    print(f"[FATAL ERROR] Ошибка в основном цикле: {e}")
-    send_telegram(f"🔥 Критическая ошибка: {e}")
-    time.sleep(10)
+                except Exception as e:
+                    print(f"[FATAL ERROR] Ошибка в основном цикле: {e}")
+                    send_telegram(f"🔥 Критическая ошибка: {e}")
+                    time.sleep(10)
 
                 max_platform = max(profits, key=profits.get)
                 max_profit = profits[max_platform]
