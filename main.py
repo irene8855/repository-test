@@ -7,6 +7,8 @@ import pandas as pd
 from web3 import Web3
 from dotenv import load_dotenv
 import threading
+from flask import Flask
+from threading import Thread
 
 # Load secrets
 load_dotenv("secrets.env")
@@ -33,7 +35,7 @@ ROUTERS = {
     }
 }
 
-# Tokens (USDT ↔ others)
+# Tokens
 TOKENS = {
     "USDT": web3.to_checksum_address("0xc2132D05D31c914a87C6611C10748AaCbA6cD43E"),
     "DAI": web3.to_checksum_address("0x8f3cf7ad23cd3cadbd9735aff958023239c6a063"),
@@ -89,7 +91,7 @@ def build_url(platform, token):
     else:
         return ROUTERS[platform]["url"].format("USDT", TOKENS[token])
 
-# Main loop
+# Bot main loop
 def main():
     print("✅ Bot started")
     send_telegram("🤖 Бот запущен и следит за рынком")
@@ -165,6 +167,22 @@ def main():
 
         time.sleep(10)
 
+# Run lightweight Flask server in a thread
+flask_app = Flask(__name__)
+
+@flask_app.route("/")
+def health_check():
+    return "Bot is running", 200
+
+def run_flask():
+    flask_app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
 if __name__ == "__main__":
+    # Запускаем Flask в фоне
+    flask_thread = Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+
+    # Запускаем торгового бота
     main()
     
