@@ -141,9 +141,9 @@ for path in paths:
         if profit_percent > 0:
             return profit_percent
 
-except Exception as e:
-    print(f"[SKIP] ⛔ Маршрут не работает: {path} — {e}")
-    continue
+    except Exception as e:
+        print(f"[SKIP] ⛔ Маршрут не работает: {path} — {e}")
+        continue
 
         print(f"[DIAG] ⚠️ Все маршруты не дали результата для {token_symbol}")
         return None
