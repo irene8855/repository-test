@@ -1,8 +1,24 @@
 app = "repository-test-updated"
 primary_region = "lhr"
 
+[env]
+  PORT = "8080"
+  WEB_CONCURRENCY = "1"
+
 [experimental]
   auto_rollback = true
 
-[env]
-  PYTHONUNBUFFERED = "1"
+[[services]]
+  internal_port = 8080
+
+  [[services.ports]]
+    port = 80
+
+  [[services.ports]]
+    port = 443
+
+[checks]
+  [checks.noop]
+    type = "tcp"
+    interval = "30s"
+    timeout = "2s"
