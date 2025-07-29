@@ -7,18 +7,3 @@ primary_region = "lhr"
 
 [experimental]
   auto_rollback = true
-
-[[services]]
-  internal_port = 8080
-
-  [[services.ports]]
-    port = 80
-
-  [[services.ports]]
-    port = 443
-
-[checks]
-  [checks.noop]
-    type = "tcp"
-    interval = "30s"
-    timeout = "2s"
