@@ -254,9 +254,8 @@ def main_loop():
                     print(debug_message)
 
                 if not profits:
-                    continue
-                    
                     time.sleep(10)
+                    continue
                     
                 except Exception as e:
                     print(f"[FATAL ERROR] Ошибка в основном цикле: {e}")
