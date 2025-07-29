@@ -107,42 +107,43 @@ def get_profit_on_dex(router_address, token_symbol):
         amount_in = 10**6  # 1 USDT
         usdt = TOKENS["USDT"]
         token = TOKENS[token_symbol]
+        wmatic = TOKENS["WMATIC"]
 
-        # Возможные промежуточные токены
-        intermediates = ["DAI", "USDC", "WMATIC", "tBTC", "AAVE", "wstETH"]
-
-        # Базовые маршруты
         paths = [
-            [usdt, token, usdt],     # Прямой цикл
-            [usdt, token],           # Покупка
-            [token, usdt],           # Продажа
+            [usdt, token, usdt],               # основной маршрут
+            [usdt, token],                     # прямой
+            [token, usdt],                     # обратный
+            [usdt, wmatic, token, usdt],       # через WMATIC
+            [usdt, token, wmatic, usdt],       # токен через WMATIC обратно
+            [usdt, wmatic, token],             # прямой через WMATIC
+            [token, wmatic, usdt]              # обратный через WMATIC
         ]
 
-        # Добавляем расширенные маршруты с промежуточными токенами
-        for inter in intermediates:
-            if inter not in TOKENS or inter == token_symbol:
-                continue
-            inter_addr = TOKENS[inter]
-            paths.extend([
-                [usdt, inter_addr, token, usdt],
-                [usdt, token, inter_addr, usdt],
-                [usdt, inter_addr, token],
-                [token, inter_addr, usdt]
-            ])
-
-        # Проверка маршрутов
         for path in paths:
             try:
                 print(f"[DEBUG] ➡️ Проверка маршрута: {path}")
                 result = contract.functions.getAmountsOut(amount_in, path).call()
+
                 if result[-1] > 0:
                     profit_percent = (result[-1] / amount_in - 1) * 100
+
+                    # ✅ Тестовая отправка в Telegram при профите больше 0.5%
+                    if profit_percent > 0.5:
+                        message = (
+                            f"🚨 Тестовый сигнал\n"
+                            f"Токен: {token_symbol}\n"
+                            f"Путь: {path}\n"
+                            f"Профит: {profit_percent:.2f}%"
+                        )
+                        send_telegram_message(message)
+
                     return profit_percent
+
             except Exception as e:
                 print(f"[SKIP] ⛔ Маршрут не работает: {path} — {e}")
                 continue
 
-        print(f"[INFO] ⚠️ Все маршруты не дали результата для {token_symbol}")
+        print(f"[DIAG] ⚠️ Все маршруты не дали результата для {token_symbol}")
         return None
 
     except Exception as e:
