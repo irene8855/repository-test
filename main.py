@@ -122,18 +122,19 @@ def main():
     min_profit = 0.1  # минимум %
     trade_duration = 4 * 60  # 4 минуты
 
-    last_heartbeat = time.time()
+    last_heartbeat = None
+    heartbeat_interval = 30 * 60  # 30 минут в секундах
 
     while True:
         try:
             now = datetime.datetime.now()
 
-            # Heartbeat каждые 60 секунд
-            if time.time() - last_heartbeat > 60:
+            # Heartbeat 
+            if (last_heartbeat is None) or ((now - last_heartbeat).total_seconds() >= heartbeat_interval):
                 heartbeat_msg = f"🟢 Бот жив и работает: {now.strftime('%Y-%m-%d %H:%M:%S')}"
                 print(heartbeat_msg)
                 send_telegram(heartbeat_msg)
-                last_heartbeat = time.time()
+                last_heartbeat = now
 
             for token in TOKENS:
                 if token == "USDT":
