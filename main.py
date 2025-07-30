@@ -1,4 +1,3 @@
-# Все импорты остаются те же, кроме Flask и Thread
 import os
 import time
 import datetime
@@ -8,14 +7,19 @@ import pandas as pd
 from web3 import Web3
 from dotenv import load_dotenv
 
-# Загрузка переменных
+# Загрузка .env
 load_dotenv("secrets.env")
 POLYGON_RPC = os.getenv("POLYGON_RPC")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 web3 = Web3(Web3.HTTPProvider(POLYGON_RPC))
-print("Web3 connected:", web3.is_connected())
+
+if not web3.is_connected():
+    print("❌ Не удалось подключиться к Polygon RPC")
+    exit(1)
+else:
+    print("✅ Успешное подключение к Polygon RPC")
 
 ROUTERS = {
     "Uniswap": {
@@ -50,9 +54,9 @@ def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
     try:
-        requests.post(url, data=data)
+        requests.post(url, data=data, timeout=10)
     except Exception as e:
-        print(f"Telegram error: {e}")
+        print(f"[Telegram ERROR] {e}")
 
 def calculate_profit(router_address, token):
     try:
@@ -62,7 +66,7 @@ def calculate_profit(router_address, token):
         result = contract.functions.getAmountsOut(amount_in, path).call()
         amount_out = result[-1]
         if amount_out == 0:
-        return None
+            return None
         profit = (amount_out / amount_in - 1) * 100
         return profit
     except Exception as e:
@@ -84,12 +88,12 @@ def build_url(platform, token):
         return ROUTERS[platform]["url"].format("USDT", TOKENS[token])
 
 def main():
-    print("✅ Bot started")
-    send_telegram("🤖 Бот запущен и следит за рынком")
+    print("🤖 Бот запущен")
+    send_telegram("✅ Бот запущен и следит за рынком")
 
     tracked = {}
-    min_profit = 0.1  # <<< ВРЕМЕННО уменьшили, чтобы бот начал реагировать
-    trade_duration = 4 * 60  # seconds
+    min_profit = 0.1
+    trade_duration = 4 * 60
 
     while True:
         now = datetime.datetime.now()
@@ -127,6 +131,9 @@ def main():
                     "platform": platform,
                     "url": url
                 }
+
+        # ⬇ обновляем текущее время перед анализом завершённых сделок
+        now = datetime.datetime.now()
 
         for key, info in list(tracked.items()):
             elapsed = (now - info["start"]).total_seconds()
