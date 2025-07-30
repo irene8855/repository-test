@@ -15,6 +15,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 web3 = Web3(Web3.HTTPProvider(POLYGON_RPC))
+print("Web3 connected:", web3.is_connected())
 
 ROUTERS = {
     "Uniswap": {
