@@ -7,20 +7,17 @@ import pandas as pd
 from web3 import Web3
 from dotenv import load_dotenv
 
-# Загрузка .env
+# Загрузка переменных
 load_dotenv("secrets.env")
 POLYGON_RPC = os.getenv("POLYGON_RPC")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# Инициализация Web3
 web3 = Web3(Web3.HTTPProvider(POLYGON_RPC))
+print("✅ Web3 connected:", web3.is_connected())
 
-if not web3.is_connected():
-    print("❌ Не удалось подключиться к Polygon RPC")
-    exit(1)
-else:
-    print("✅ Успешное подключение к Polygon RPC")
-
+# Маршрутизаторы
 ROUTERS = {
     "Uniswap": {
         "router_address": web3.to_checksum_address("0xE592427A0AEce92De3Edee1F18E0157C05861564"),
@@ -36,6 +33,7 @@ ROUTERS = {
     }
 }
 
+# Токены
 TOKENS = {
     "USDT": web3.to_checksum_address("0xc2132D05D31c914a87C6611C10748AaCbA6cD43E"),
     "DAI": web3.to_checksum_address("0x8f3cf7ad23cd3cadbd9735aff958023239c6a063"),
@@ -48,20 +46,25 @@ TOKENS = {
     "SAND": web3.to_checksum_address("0xbbba073c31bf03b8acf7c28ef0738decf3695683"),
 }
 
+# ABI для getAmountsOut
 GET_AMOUNTS_OUT_ABI = '[{"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"}],"name":"getAmountsOut","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"}]'
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
     try:
-        requests.post(url, data=data, timeout=10)
+        response = requests.post(url, data=data)
+        if response.status_code == 200:
+            print(f"[telegram] ✅ Message sent: {message[:50]}...")
+        else:
+            print(f"[telegram] ❌ Error {response.status_code}: {response.text}")
     except Exception as e:
-        print(f"[Telegram ERROR] {e}")
+        print(f"[telegram] ❌ Exception: {e}")
 
 def calculate_profit(router_address, token):
     try:
         contract = web3.eth.contract(address=router_address, abi=GET_AMOUNTS_OUT_ABI)
-        amount_in = 10**6
+        amount_in = 10**6  # 1 USDT
         path = [TOKENS["USDT"], TOKENS[token], TOKENS["USDT"]]
         result = contract.functions.getAmountsOut(amount_in, path).call()
         amount_out = result[-1]
@@ -73,6 +76,12 @@ def calculate_profit(router_address, token):
         print(f"[ERROR calculate_profit] {token} - {e}")
         return None
 
+def build_url(platform, token):
+    if platform == "1inch":
+        return ROUTERS[platform]["url"].format("USDT", token)
+    else:
+        return ROUTERS[platform]["url"].format("USDT", TOKENS[token])
+
 def log_trade(data):
     file = "historical.csv"
     df = pd.DataFrame([data])
@@ -81,19 +90,13 @@ def log_trade(data):
         df = pd.concat([df_old, df], ignore_index=True)
     df.to_csv(file, index=False)
 
-def build_url(platform, token):
-    if platform == "1inch":
-        return ROUTERS[platform]["url"].format("USDT", token)
-    else:
-        return ROUTERS[platform]["url"].format("USDT", TOKENS[token])
-
 def main():
-    print("🤖 Бот запущен")
-    send_telegram("✅ Бот запущен и следит за рынком")
+    print("✅ Bot started")
+    send_telegram("🤖 Бот запущен и следит за рынком")
 
     tracked = {}
-    min_profit = 0.1
-    trade_duration = 4 * 60
+    min_profit = 0.1  # Можно увеличить, чтобы фильтровать шум
+    trade_duration = 4 * 60  # в секундах
 
     while True:
         now = datetime.datetime.now()
@@ -132,10 +135,8 @@ def main():
                     "url": url
                 }
 
-        # ⬇ обновляем текущее время перед анализом завершённых сделок
-        now = datetime.datetime.now()
-
         for key, info in list(tracked.items()):
+            now = datetime.datetime.now()  # обновляем время
             elapsed = (now - info["start"]).total_seconds()
             if elapsed >= trade_duration:
                 token, platform = key
