@@ -86,8 +86,8 @@ def main():
     send_telegram("🤖 Бот запущен и следит за рынком")
 
     tracked = {}
-    min_profit = 1.1
-    trade_duration = 4 * 60
+    min_profit = 0.1  # <<< ВРЕМЕННО уменьшили, чтобы бот начал реагировать
+    trade_duration = 4 * 60  # seconds
 
     while True:
         now = datetime.datetime.now()
