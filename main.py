@@ -9,11 +9,6 @@ from dotenv import load_dotenv
 
 # Загрузка переменных
 load_dotenv("secrets.env")
-POLYGON_RPC = os.getenv("POLYGON_RPC")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-# Список RPC
 RPC_LIST = [
     os.getenv("POLYGON_RPC"),
     "https://polygon-rpc.com",
@@ -22,6 +17,9 @@ RPC_LIST = [
     "https://polygon-bor.publicnode.com",
     "https://1rpc.io/matic",
 ]
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 def get_working_web3():
     for rpc in RPC_LIST:
@@ -36,7 +34,6 @@ def get_working_web3():
             print(f"[RPC ERROR] {rpc} - {e}")
     raise Exception("❌ No working RPC found")
 
-# Инициализация Web3
 web3 = get_working_web3()
 
 # Маршрутизаторы
@@ -68,6 +65,7 @@ TOKENS = {
     "SAND": web3.to_checksum_address("0xbbba073c31bf03b8acf7c28ef0738decf3695683"),
 }
 
+# ABI для getAmountsOut
 GET_AMOUNTS_OUT_ABI = '[{"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"}],"name":"getAmountsOut","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"}]'
 
 def send_telegram(message):
@@ -85,13 +83,22 @@ def send_telegram(message):
 def calculate_profit(router_address, token):
     try:
         contract = web3.eth.contract(address=router_address, abi=GET_AMOUNTS_OUT_ABI)
-        amount_in = 10**6  # 1 USDT
-        path = [TOKENS["USDT"], TOKENS[token], TOKENS["USDT"]]
-        result = contract.functions.getAmountsOut(amount_in, path).call()
-        amount_out = result[-1]
-        if amount_out == 0:
+        amount_in = 10**6  # 1 USDT with 6 decimals
+        # Получаем сначала сколько USDT -> TOKEN
+        path_in = [TOKENS["USDT"], TOKENS[token]]
+        amounts_out_in = contract.functions.getAmountsOut(amount_in, path_in).call()
+        token_amount = amounts_out_in[-1]
+        if token_amount == 0:
             return None
-        profit = (amount_out / amount_in - 1) * 100
+
+        # Теперь сколько TOKEN -> USDT
+        path_out = [TOKENS[token], TOKENS["USDT"]]
+        amounts_out_out = contract.functions.getAmountsOut(token_amount, path_out).call()
+        final_amount = amounts_out_out[-1]
+        if final_amount == 0:
+            return None
+
+        profit = (final_amount / amount_in - 1) * 100
         return profit
     except Exception as e:
         print(f"[ERROR calculate_profit] {token} - {e}")
@@ -116,8 +123,8 @@ def main():
     send_telegram("🤖 Бот запущен и следит за рынком")
 
     tracked = {}
-    min_profit = 0.1
-    trade_duration = 4 * 60
+    min_profit = 0.1  # Можно увеличить, чтобы фильтровать шум
+    trade_duration = 4 * 60  # в секундах
 
     while True:
         now = datetime.datetime.now()
@@ -157,7 +164,7 @@ def main():
                 }
 
         for key, info in list(tracked.items()):
-            now = datetime.datetime.now()
+            now = datetime.datetime.now()  # обновляем время
             elapsed = (now - info["start"]).total_seconds()
             if elapsed >= trade_duration:
                 token, platform = key
