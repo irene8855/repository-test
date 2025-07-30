@@ -126,85 +126,94 @@ def main():
     heartbeat_interval = 30 * 60  # 30 минут в секундах
 
     while True:
-        try:
-            now = datetime.datetime.now()
+    try:
+        now = datetime.datetime.now()
 
-            # Heartbeat 
-            if (last_heartbeat is None) or ((now - last_heartbeat).total_seconds() >= heartbeat_interval):
-                heartbeat_msg = f"🟢 Бот жив и работает: {now.strftime('%Y-%m-%d %H:%M:%S')}"
-                print(heartbeat_msg)
-                send_telegram(heartbeat_msg)
-                last_heartbeat = now
+        # Heartbeat 
+        if (last_heartbeat is None) or ((now - last_heartbeat).total_seconds() >= heartbeat_interval):
+            heartbeat_msg = f"🟢 Бот жив и работает: {now.strftime('%Y-%m-%d %H:%M:%S')}"
+            print(heartbeat_msg)
+            send_telegram(heartbeat_msg)
+            last_heartbeat = now
 
-            for token in TOKENS:
-                if token == "USDT":
+        for token in TOKENS:
+            if token == "USDT":
+                continue
+
+            for platform, info in ROUTERS.items():
+                profit = calculate_profit(info["router_address"], token)
+                print(f"[DEBUG] Profit for {token} on {platform}: {profit}")
+
+                if profit is None:
+                    print(f"[DEBUG] No profit data for {token} on {platform}, skipping.")
                     continue
 
-                for platform, info in ROUTERS.items():
-                    profit = calculate_profit(info["router_address"], token)
+                if profit < min_profit:
+                    print(f"[DEBUG] Profit {profit} < min_profit {min_profit}, skipping.")
+                    continue
 
-                    if profit is None or profit < min_profit:
-                        continue
+                last = tracked.get((token, platform))
+                if last and (now - last["start"]).total_seconds() < trade_duration + 60:
+                    print(f"[DEBUG] Recent trade found for {token} on {platform}, skipping.")
+                    continue
 
-                    last = tracked.get((token, platform))
-                    if last and (now - last["start"]).total_seconds() < trade_duration + 60:
-                        continue
+                start = now
+                end = now + datetime.timedelta(seconds=trade_duration)
+                url = build_url(platform, token)
 
-                    start = now
-                    end = now + datetime.timedelta(seconds=trade_duration)
-                    url = build_url(platform, token)
+                send_telegram(
+                    f"📉USDT→{token}→USDT📈\n"
+                    f"PLATFORM: {platform}\n"
+                    f"START: {start.strftime('%H:%M')}\n"
+                    f"SELL: {end.strftime('%H:%M')}\n"
+                    f"ESTIMATED PROFIT: {round(profit, 2)}% 💸\n"
+                    f"{url}"
+                )
 
+                tracked[(token, platform)] = {
+                    "start": start,
+                    "profit": profit,
+                    "platform": platform,
+                    "url": url
+                }
+
+        # Проверяем завершение сделок
+        for key, info in list(tracked.items()):
+            now = datetime.datetime.now()
+            elapsed = (now - info["start"]).total_seconds()
+            if elapsed >= trade_duration:
+                token, platform = key
+                real_profit = calculate_profit(ROUTERS[platform]["router_address"], token)
+                print(f"[DEBUG] Real profit for completed trade {token} on {platform}: {real_profit}")
+
+                if real_profit is not None:
                     send_telegram(
-                        f"📉USDT→{token}→USDT📈\n"
-                        f"PLATFORM: {platform}\n"
-                        f"START: {start.strftime('%H:%M')}\n"
-                        f"SELL: {end.strftime('%H:%M')}\n"
-                        f"ESTIMATED PROFIT: {round(profit, 2)}% 💸\n"
-                        f"{url}"
+                        f"✅ Сделка завершена ({token} на {platform})\n"
+                        f"Предсказано: {round(info['profit'],2)}%\n"
+                        f"Фактически: {round(real_profit,2)}%\n"
+                        f"{info['url']}"
+                    )
+                else:
+                    send_telegram(
+                        f"⚠️ Не удалось получить фактическую прибыль по {token} ({platform})"
                     )
 
-                    tracked[(token, platform)] = {
-                        "start": start,
-                        "profit": profit,
-                        "platform": platform,
-                        "url": url
-                    }
+                log_trade({
+                    "timestamp": now.isoformat(),
+                    "token": token,
+                    "platform": platform,
+                    "predicted_profit": round(info["profit"], 4),
+                    "real_profit": round(real_profit, 4) if real_profit else None
+                })
+                tracked.pop(key)
 
-            for key, info in list(tracked.items()):
-                now = datetime.datetime.now()
-                elapsed = (now - info["start"]).total_seconds()
-                if elapsed >= trade_duration:
-                    token, platform = key
-                    real_profit = calculate_profit(ROUTERS[platform]["router_address"], token)
+        time.sleep(10)
 
-                    if real_profit is not None:
-                        send_telegram(
-                            f"✅ Сделка завершена ({token} на {platform})\n"
-                            f"Предсказано: {round(info['profit'],2)}%\n"
-                            f"Фактически: {round(real_profit,2)}%\n"
-                            f"{info['url']}"
-                        )
-                    else:
-                        send_telegram(
-                            f"⚠️ Не удалось получить фактическую прибыль по {token} ({platform})"
-                        )
-
-                    log_trade({
-                        "timestamp": now.isoformat(),
-                        "token": token,
-                        "platform": platform,
-                        "predicted_profit": round(info["profit"], 4),
-                        "real_profit": round(real_profit, 4) if real_profit else None
-                    })
-                    tracked.pop(key)
-
-            time.sleep(10)
-
-        except Exception as e:
-            error_msg = f"[CRITICAL ERROR] {e}"
-            print(error_msg)
-            send_telegram(error_msg)
-            time.sleep(10)  # пауза, чтобы не спамить при ошибках
+    except Exception as e:
+        error_msg = f"[CRITICAL ERROR] {e}"
+        print(error_msg)
+        send_telegram(error_msg)
+        time.sleep(10)
 
 if __name__ == "__main__":
     main()
