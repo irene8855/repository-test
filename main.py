@@ -113,7 +113,6 @@ def log_trade(data):
         df = pd.concat([df_old, df], ignore_index=True)
     df.to_csv(file, index=False)
 
-# MAIN
 def main():
     print("✅ Bot started")
     send_telegram("🤖 Бот запущен и следит за рынком")
@@ -121,17 +120,16 @@ def main():
     tracked = {}
     min_profit = 0.1  # минимум %
     trade_duration = 4 * 60  # 4 минуты
-
     last_heartbeat = None
-    heartbeat_interval = 30 * 60  # 30 минут в секундах
+    heartbeat_interval = 30 * 60  # 30 минут
 
     while True:
         try:
             now = datetime.datetime.now()
 
-            # Heartbeat 
+            # ⏱️ Heartbeat
             if (last_heartbeat is None) or ((now - last_heartbeat).total_seconds() >= heartbeat_interval):
-                heartbeat_msg = f"🟢 Бот жив и работает: {now.strftime('%Y-%m-%d %H:%M:%S')}"
+                heartbeat_msg = f"🟢 Бот жив: {now.strftime('%Y-%m-%d %H:%M:%S')}"
                 print(heartbeat_msg)
                 send_telegram(heartbeat_msg)
                 last_heartbeat = now
@@ -141,19 +139,33 @@ def main():
                     continue
 
                 for platform, info in ROUTERS.items():
+                    print(f"[DEBUG] Проверка {token} через {platform}")
+
                     profit = calculate_profit(info["router_address"], token)
 
-                    if profit is None or profit < min_profit:
+                    if profit is None:
+                        print(f"[DEBUG] ❌ Не удалось рассчитать прибыль для {token} ({platform})")
+                        continue
+
+                    print(f"[DEBUG] ➕ Прибыль для {token} через {platform}: {round(profit, 4)}%")
+
+                    if profit < min_profit:
+                        print(f"[DEBUG] ⚠️ Прибыль ниже порога ({min_profit}%) — пропуск")
                         continue
 
                     last = tracked.get((token, platform))
-                    if last and (now - last["start"]).total_seconds() < trade_duration + 60:
-                        continue
+                    if last:
+                        delta = (now - last["start"]).total_seconds()
+                        print(f"[DEBUG] 🔁 Уже отслеживается {token} через {platform}, прошло {delta:.1f} сек")
+                        if delta < trade_duration + 60:
+                            continue
 
+                    # 📡 Отправка сигнала
                     start = now
                     end = now + datetime.timedelta(seconds=trade_duration)
                     url = build_url(platform, token)
 
+                    print(f"[ALERT] 🚨 Сделка найдена: {token} ({round(profit, 2)}%) через {platform}")
                     send_telegram(
                         f"📉USDT→{token}→USDT📈\n"
                         f"PLATFORM: {platform}\n"
@@ -170,14 +182,18 @@ def main():
                         "url": url
                     }
 
+            # ⏳ Завершение сделок
             for key, info in list(tracked.items()):
                 now = datetime.datetime.now()
                 elapsed = (now - info["start"]).total_seconds()
                 if elapsed >= trade_duration:
                     token, platform = key
+                    print(f"[DEBUG] ⏰ Завершение сделки {token} ({platform}) после {elapsed:.1f} сек")
+
                     real_profit = calculate_profit(ROUTERS[platform]["router_address"], token)
 
                     if real_profit is not None:
+                        print(f"[RESULT] ✅ {token} ({platform}) фактическая прибыль: {round(real_profit,2)}%")
                         send_telegram(
                             f"✅ Сделка завершена ({token} на {platform})\n"
                             f"Предсказано: {round(info['profit'],2)}%\n"
@@ -185,6 +201,7 @@ def main():
                             f"{info['url']}"
                         )
                     else:
+                        print(f"[RESULT] ⚠️ Не удалось получить фактическую прибыль по {token} ({platform})")
                         send_telegram(
                             f"⚠️ Не удалось получить фактическую прибыль по {token} ({platform})"
                         )
@@ -196,6 +213,7 @@ def main():
                         "predicted_profit": round(info["profit"], 4),
                         "real_profit": round(real_profit, 4) if real_profit else None
                     })
+
                     tracked.pop(key)
 
             time.sleep(10)
@@ -204,7 +222,7 @@ def main():
             error_msg = f"[CRITICAL ERROR] {e}"
             print(error_msg)
             send_telegram(error_msg)
-            time.sleep(10)  # пауза, чтобы не спамить при ошибках
+            time.sleep(10)
 
 if __name__ == "__main__":
     main()
