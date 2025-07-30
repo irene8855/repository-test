@@ -61,10 +61,11 @@ def calculate_profit(router_address, token):
         result = contract.functions.getAmountsOut(amount_in, path).call()
         amount_out = result[-1]
         if amount_out == 0:
-            return None
+        return None
         profit = (amount_out / amount_in - 1) * 100
         return profit
-    except:
+    except Exception as e:
+        print(f"[ERROR calculate_profit] {token} - {e}")
         return None
 
 def log_trade(data):
