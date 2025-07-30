@@ -1,8 +1,20 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
+
+# Jupyter
+.ipynb_checkpoints
+
+# Environment and secrets
 .env
 secrets.env
-historical.csv
+
+# Logs and output
 *.log
+historical.csv
+
+# Git
+.git
+.gitignore
