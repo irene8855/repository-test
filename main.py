@@ -7,8 +7,12 @@ import pandas as pd
 from web3 import Web3
 from dotenv import load_dotenv
 
-# Загрузка переменных
+# Загрузка .env
 load_dotenv("secrets.env")
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
 RPC_LIST = [
     os.getenv("POLYGON_RPC"),
     "https://polygon-rpc.com",
@@ -17,9 +21,6 @@ RPC_LIST = [
     "https://polygon-bor.publicnode.com",
     "https://1rpc.io/matic",
 ]
-
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 def get_working_web3():
     for rpc in RPC_LIST:
@@ -36,11 +37,11 @@ def get_working_web3():
 
 web3 = get_working_web3()
 
-# Маршрутизаторы
+# Маршрутизаторы: все используют getAmountsOut (Uniswap V2 совместимые)
 ROUTERS = {
-    "Uniswap": {
-        "router_address": web3.to_checksum_address("0xE592427A0AEce92De3Edee1F18E0157C05861564"),
-        "url": "https://app.uniswap.org/#/swap?inputCurrency={}&outputCurrency={}"
+    "QuickSwap": {
+        "router_address": web3.to_checksum_address("0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff"),
+        "url": "https://quickswap.exchange/#/swap?inputCurrency={}&outputCurrency={}"
     },
     "SushiSwap": {
         "router_address": web3.to_checksum_address("0x1b02da8cb0d097eb8d57a175b88c7d8b47997506"),
@@ -52,7 +53,6 @@ ROUTERS = {
     }
 }
 
-# Токены
 TOKENS = {
     "USDT": web3.to_checksum_address("0xc2132D05D31c914a87C6611C10748AaCbA6cD43E"),
     "DAI": web3.to_checksum_address("0x8f3cf7ad23cd3cadbd9735aff958023239c6a063"),
@@ -65,7 +65,6 @@ TOKENS = {
     "SAND": web3.to_checksum_address("0xbbba073c31bf03b8acf7c28ef0738decf3695683"),
 }
 
-# ABI для getAmountsOut
 GET_AMOUNTS_OUT_ABI = '[{"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"}],"name":"getAmountsOut","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"}]'
 
 def send_telegram(message):
@@ -83,18 +82,14 @@ def send_telegram(message):
 def calculate_profit(router_address, token):
     try:
         contract = web3.eth.contract(address=router_address, abi=GET_AMOUNTS_OUT_ABI)
-        amount_in = 10**6  # 1 USDT with 6 decimals
-        # Получаем сначала сколько USDT -> TOKEN
-        path_in = [TOKENS["USDT"], TOKENS[token]]
-        amounts_out_in = contract.functions.getAmountsOut(amount_in, path_in).call()
-        token_amount = amounts_out_in[-1]
-        if token_amount == 0:
-            return None
+        amount_in = 10**6  # 1 USDT
 
-        # Теперь сколько TOKEN -> USDT
+        path_in = [TOKENS["USDT"], TOKENS[token]]
+        amount_out = contract.functions.getAmountsOut(amount_in, path_in).call()[-1]
+
         path_out = [TOKENS[token], TOKENS["USDT"]]
-        amounts_out_out = contract.functions.getAmountsOut(token_amount, path_out).call()
-        final_amount = amounts_out_out[-1]
+        final_amount = contract.functions.getAmountsOut(amount_out, path_out).call()[-1]
+
         if final_amount == 0:
             return None
 
@@ -123,8 +118,8 @@ def main():
     send_telegram("🤖 Бот запущен и следит за рынком")
 
     tracked = {}
-    min_profit = 0.1  # Можно увеличить, чтобы фильтровать шум
-    trade_duration = 4 * 60  # в секундах
+    min_profit = 0.1
+    trade_duration = 4 * 60
 
     while True:
         now = datetime.datetime.now()
@@ -164,7 +159,7 @@ def main():
                 }
 
         for key, info in list(tracked.items()):
-            now = datetime.datetime.now()  # обновляем время
+            now = datetime.datetime.now()
             elapsed = (now - info["start"]).total_seconds()
             if elapsed >= trade_duration:
                 token, platform = key
