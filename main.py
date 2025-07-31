@@ -34,16 +34,26 @@ GET_AMOUNTS_OUT_ABI = '[{"inputs":[{"internalType":"uint256","name":"amountIn","
 GET_PAIR_ABI = '[{"constant":true,"inputs":[{"internalType":"address","name":"tokenA","type":"address"},{"internalType":"address","name":"tokenB","type":"address"}],"name":"getPair","outputs":[{"internalType":"address","name":"pair","type":"address"}],"payable":false,"stateMutability":"view","type":"function"}]'
 
 TOKENS = {
-    "USDT": {"symbol": "USDT", "decimals": 6, "sushi": "0xc2132D05D31c914a87C6611C10748AaCbA6cD43E", "quick": "0xc2132D05D31c914a87C6611C10748AaCbA6cD43E"},
-    "DAI": {"symbol": "DAI", "decimals": 18, "sushi": "0x8f3cf7ad23cd3cadbd9735aff958023239c6a063", "quick": "0x8f3cf7ad23cd3cadbd9735aff958023239c6a063"},
-    "USDC": {"symbol": "USDC", "decimals": 6, "sushi": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", "quick": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"},
-    "FRAX": {"symbol": "FRAX", "decimals": 18, "sushi": "0x45c32fa6df82ead1e2ef74d17b76547eddfaff89", "quick": "0x45c32fa6df82ead1e2ef74d17b76547eddfaff89"},
-    "wstETH": {"symbol": "wstETH", "decimals": 18, "sushi": "0x7f39c581f595b53c5cb19bcd5f5cf9b136097b5a", "quick": "0x7f39c581f595b53c5cb19bcd5f5cf9b136097b5a"},
-    "BET": {"symbol": "BET", "decimals": 18, "sushi": "0x3183a3f59e18beb3214be625e4eb2a49ac03df06", "quick": "0x3183a3f59e18beb3214be625e4eb2a49ac03df06"},
-    "tBTC": {"symbol": "tBTC", "decimals": 18, "sushi": "0x1c5db575e2fec81cbe6718df3b282e4ddbb2aede", "quick": "0x1c5db575e2fec81cbe6718df3b282e4ddbb2aede"},
-    "EMT": {"symbol": "EMT", "decimals": 18, "sushi": "0x1e3a602906a749c6c07127dd3f2d97accb3fda3a", "quick": "0x1e3a602906a749c6c07127dd3f2d97accb3fda3a"},
-    "GMT": {"symbol": "GMT", "decimals": 18, "sushi": "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419", "quick": "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419"}
+    "USDT":  {"symbol": "USDT", "decimals": 6,  "sushi": "0xc2132D05D31c914a87C6611C10748AaCbA6cD43E", "quick": "0xc2132D05D31c914a87C6611C10748AaCbA6cD43E"},
+    "DAI":   {"symbol": "DAI",  "decimals": 18, "sushi": "0x8f3cf7ad23cd3cadbd9735aff958023239c6a063", "quick": "0x8f3cf7ad23cd3cadbd9735aff958023239c6a063"},
+    "USDC":  {"symbol": "USDC", "decimals": 6,  "sushi": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", "quick": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"},
+    "FRAX":  {"symbol": "FRAX", "decimals": 18, "sushi": "0x45c32fa6df82ead1e2ef74d17b76547eddfaff89", "quick": "0x45c32fa6df82ead1e2ef74d17b76547eddfaff89"},
+    "wstETH":{"symbol": "wstETH", "decimals": 18, "sushi": "0x7f39c581f595b53c5cb19bcd5f5cf9b136097b5a", "quick": "0x7f39c581f595b53c5cb19bcd5f5cf9b136097b5a"},
+    "BET":   {"symbol": "BET", "decimals": 18, "sushi": "0x3183a3f59e18beb3214be625e4eb2a49ac03df06", "quick": "0x3183a3f59e18beb3214be625e4eb2a49ac03df06"},
+    "tBTC":  {"symbol": "tBTC", "decimals": 18, "sushi": "0x1c5db575e2fec81cbe6718df3b282e4ddbb2aede", "quick": "0x1c5db575e2fec81cbe6718df3b282e4ddbb2aede"},
+    "EMT":   {"symbol": "EMT", "decimals": 18, "sushi": "0x1e3a602906a749c6c07127dd3f2d97accb3fda3a", "quick": "0x1e3a602906a749c6c07127dd3f2d97accb3fda3a"},
+    "GMT":   {"symbol": "GMT", "decimals": 18, "sushi": "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419", "quick": "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419"},
+    "SAND":  {"symbol": "SAND", "decimals": 18, "sushi": "0xbbba073c31bf03b8acf7c28ef0738decf3695683", "quick": "0xbbba073c31bf03b8acf7c28ef0738decf3695683"},
+    "AAVE":  {"symbol": "AAVE", "decimals": 18, "sushi": "0xd6df932a45c0f255f85145f286ea0b292b21c90b", "quick": "0xd6df932a45c0f255f85145f286ea0b292b21c90b"},
+    "LDO":   {"symbol": "LDO", "decimals": 18, "sushi": "0xc3c7d422809852031b44ab29eec9f1eff2a58756", "quick": "0xc3c7d422809852031b44ab29eec9f1eff2a58756"},
+    "LINK":  {"symbol": "LINK", "decimals": 18, "sushi": "0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39", "quick": "0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39"},
 }
+
+# Приведение всех адресов токенов к checksum
+for token_data in TOKENS.values():
+    for key in ["sushi", "quick"]:
+        if key in token_data:
+            token_data[key] = Web3.to_checksum_address(token_data[key])
 
 ROUTERS = {
     "SushiSwap": {
@@ -84,15 +94,10 @@ def check_pair(factory_addr, path):
 def calculate_profit(router_addr, factory_addr, token_symbol, platform):
     try:
         platform_key = ROUTERS[platform]["platform_key"]
-        token = Web3.to_checksum_address(TOKENS[token_symbol][platform_key])
-        usdt = Web3.to_checksum_address(TOKENS["USDT"][platform_key])
+        token = TOKENS[token_symbol][platform_key]
+        usdt = TOKENS["USDT"][platform_key]
 
-        bridges = [
-            Web3.to_checksum_address(TOKENS["USDC"][platform_key]),
-            Web3.to_checksum_address(TOKENS["DAI"][platform_key]),
-            Web3.to_checksum_address(TOKENS["FRAX"][platform_key])
-        ]
-
+        bridges = [TOKENS["USDC"][platform_key], TOKENS["DAI"][platform_key], TOKENS["FRAX"][platform_key]]
         contract = web3.eth.contract(address=router_addr, abi=GET_AMOUNTS_OUT_ABI)
         amount_in = 10 ** TOKENS["USDT"]["decimals"]
 
