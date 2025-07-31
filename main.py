@@ -1,11 +1,14 @@
 import os, time, datetime, requests, pandas as pd
 from web3 import Web3
 from dotenv import load_dotenv
+import pytz
 
 load_dotenv("secrets.env")
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+LONDON_TZ = pytz.timezone("Europe/London")
+
 RPC_LIST = [
     os.getenv("POLYGON_RPC"),
     "https://polygon-rpc.com",
@@ -70,20 +73,20 @@ TOKENS = {
     "tBTC": {
         "symbol": "tBTC",
         "decimals": 18,
-        "sushi": "0x1c5db575e2fec81cbe...",  # проверить
-        "quick": "0x1c5db575e2fec81cbe..."
+        "sushi": "0x1c5db575e2fec81cbe6718df3b282e4ddbb2aede",
+        "quick": "0x1c5db575e2fec81cbe6718df3b282e4ddbb2aede"
     },
     "EMT": {
         "symbol": "EMT",
         "decimals": 18,
-        "sushi": "0x1e3a602906a...",  # проверить
-        "quick": "0x1e3a602906a..."
+        "sushi": "0x1e3a602906a749c6c07127dd3f2d97accb3fda3a",
+        "quick": "0x1e3a602906a749c6c07127dd3f2d97accb3fda3a"
     },
     "GMT": {
         "symbol": "GMT",
         "decimals": 18,
-        "sushi": "0x5f4ec3df9...",  # проверить
-        "quick": "0x5f4ec3df9..."
+        "sushi": "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419",
+        "quick": "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419"
     }
 }
 
@@ -91,17 +94,20 @@ ROUTERS = {
     "SushiSwap": {
         "router": web3.to_checksum_address("0x1b02da8cb0d097eb8d57a175b88c7d8b47997506"),
         "factory": web3.to_checksum_address("0xc35dadb65012ec5796536bd9864ed8773abc74c4"),
-        "url": "https://www.sushi.com/swap?inputCurrency={}&outputCurrency={}"
+        "url": "https://www.sushi.com/swap?inputCurrency={}&outputCurrency={}",
+        "platform_key": "sushi"
     },
     "Quickswap": {
         "router": web3.to_checksum_address("0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff"),
         "factory": web3.to_checksum_address("0x5757371414417b8c6caad45baef941abc7d3ab32"),
-        "url": "https://quickswap.exchange/#/swap?inputCurrency={}&outputCurrency={}"
+        "url": "https://quickswap.exchange/#/swap?inputCurrency={}&outputCurrency={}",
+        "platform_key": "quick"
     },
     "1inch": {
         "router": None,
         "factory": None,
-        "url": "https://app.1inch.io/#/137/swap/USDT/{}"
+        "url": "https://app.1inch.io/#/137/swap/USDT/{}",
+        "platform_key": None
     }
 }
 
@@ -122,15 +128,22 @@ def has_pair(factory_addr, tokA, tokB):
         return False
 
 def calculate_profit(router_addr, factory_addr, token_symbol, platform):
-    tok = TOKENS[token_symbol]
-    tok_addr = tok.get(platform.lower())
-    if not has_pair(factory_addr, Web3.to_checksum_address(TOKENS["USDT"][platform.lower()]), Web3.to_checksum_address(tok_addr)):
-        print(f"[DEBUG] Нет пары USDT↔{token_symbol} на {platform}")
-        return None
     try:
+        platform_key = ROUTERS[platform]["platform_key"]
+        if not platform_key:
+            return None
+
+        tok = TOKENS[token_symbol]
+        tok_addr = tok.get(platform_key)
+        usdt_addr = TOKENS["USDT"].get(platform_key)
+
+        if not has_pair(factory_addr, Web3.to_checksum_address(usdt_addr), Web3.to_checksum_address(tok_addr)):
+            print(f"[DEBUG] Нет пары USDT↔{token_symbol} на {platform}")
+            return None
+
         contract = web3.eth.contract(address=router_addr, abi=GET_AMOUNTS_OUT_ABI)
         amount_in = 10 ** TOKENS["USDT"]["decimals"]
-        path = [Web3.to_checksum_address(TOKENS["USDT"][platform.lower()]), Web3.to_checksum_address(tok_addr), Web3.to_checksum_address(TOKENS["USDT"][platform.lower()])]
+        path = [Web3.to_checksum_address(usdt_addr), Web3.to_checksum_address(tok_addr), Web3.to_checksum_address(usdt_addr)]
         result = contract.functions.getAmountsOut(amount_in, path).call()
         out = result[-1]
         if out == 0:
@@ -143,56 +156,82 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform):
         return None
 
 def build_url(platform, token_symbol):
+    platform_key = ROUTERS[platform]["platform_key"]
+    if not platform_key:
+        return None
     template = ROUTERS[platform]["url"]
-    usdt = TOKENS["USDT"][platform.lower()]
-    tok = TOKENS[token_symbol][platform.lower()]
+    usdt = TOKENS["USDT"][platform_key]
+    tok = TOKENS[token_symbol][platform_key]
     return template.format(usdt, tok)
 
 def log_trade(d):
-    file="historical.csv"
-    df=pd.DataFrame([d])
+    file = "historical.csv"
+    df = pd.DataFrame([d])
     if os.path.exists(file):
-        df=pd.concat([pd.read_csv(file), df], ignore_index=True)
+        df = pd.concat([pd.read_csv(file), df], ignore_index=True)
     df.to_csv(file, index=False)
+
+def get_local_time():
+    return datetime.datetime.now(LONDON_TZ)
 
 def main():
     print("💡 Bot started")
     send_telegram("🤖 Bot launched")
     tracked = {}
-    min_profit=0.1
-    trade_dur=4*60
-    last_hb=None
+    min_profit = 0.1
+    trade_dur = 4 * 60
+    last_hb = None
 
     while True:
-        now=datetime.datetime.now()
-        if last_hb is None or (now-last_hb).total_seconds()>=30*60:
-            send_telegram(f"🟢 Bot alive: {now}")
-            last_hb=now
+        now = get_local_time()
+        if last_hb is None or (now - last_hb).total_seconds() >= 30 * 60:
+            send_telegram(f"🟢 Bot alive: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+            last_hb = now
 
         for token in TOKENS:
-            if token=="USDT": continue
+            if token == "USDT":
+                continue
             for platform, info in ROUTERS.items():
-                if info["router"] is None: continue
-                profit=calculate_profit(info["router"], info["factory"], token, platform)
-                if profit is None or profit<min_profit: continue
-                key=(token,platform)
-                if key in tracked and (now-tracked[key]["start"]).total_seconds()<trade_dur+60:
+                if info["router"] is None or info["platform_key"] is None:
                     continue
-                url=build_url(platform, token)
+                profit = calculate_profit(info["router"], info["factory"], token, platform)
+                if profit is None or profit < min_profit:
+                    continue
+                key = (token, platform)
+                if key in tracked and (now - tracked[key]["start"]).total_seconds() < trade_dur + 60:
+                    continue
+                url = build_url(platform, token)
                 send_telegram(f"📉 USDT→{token}→USDT\nPlatform: {platform}\nEst. profit: {profit:.2f}% 💸\n{url}")
-                tracked[key]={"start":now,"profit":profit,"token":token,"platform":platform,"url":url}
+                tracked[key] = {
+                    "start": now,
+                    "profit": profit,
+                    "token": token,
+                    "platform": platform,
+                    "url": url
+                }
 
-        for key,info in list(tracked.items()):
-            if (datetime.datetime.now()-info["start"]).total_seconds()>=trade_dur:
-                rp=calculate_profit(ROUTERS[info["platform"]]["router"],ROUTERS[info["platform"]]["factory"],info["token"],info["platform"])
+        for key, info in list(tracked.items()):
+            if (get_local_time() - info["start"]).total_seconds() >= trade_dur:
+                rp = calculate_profit(
+                    ROUTERS[info["platform"]]["router"],
+                    ROUTERS[info["platform"]]["factory"],
+                    info["token"],
+                    info["platform"]
+                )
                 if rp is not None:
                     send_telegram(f"✅ Done {info['token']} on {info['platform']}\nPredicted: {info['profit']:.2f}%\nActual: {rp:.2f}%\n{info['url']}")
                 else:
                     send_telegram(f"⚠️ Could not fetch actual for {info['token']} on {info['platform']}")
-                log_trade({"timestamp":datetime.datetime.now().isoformat(),"token":info["token"],"platform":info["platform"],"pred":info["profit"],"real":rp})
+                log_trade({
+                    "timestamp": get_local_time().isoformat(),
+                    "token": info["token"],
+                    "platform": info["platform"],
+                    "pred": info["profit"],
+                    "real": rp
+                })
                 tracked.pop(key)
         time.sleep(10)
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
     
