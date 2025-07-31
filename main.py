@@ -71,7 +71,8 @@ def check_pair(factory_addr, path):
     try:
         factory = web3.eth.contract(address=factory_addr, abi=GET_PAIR_ABI)
         for i in range(len(path)-1):
-            a, b = path[i], path[i+1]
+            a = Web3.to_checksum_address(path[i])
+            b = Web3.to_checksum_address(path[i+1])
             pair = factory.functions.getPair(a, b).call()
             if pair == "0x0000000000000000000000000000000000000000":
                 return False
@@ -83,17 +84,21 @@ def check_pair(factory_addr, path):
 def calculate_profit(router_addr, factory_addr, token_symbol, platform):
     try:
         platform_key = ROUTERS[platform]["platform_key"]
-        token = TOKENS[token_symbol][platform_key]
-        usdt = TOKENS["USDT"][platform_key]
-        bridge = TOKENS["USDC"][platform_key]  # Bridge token
+        token = Web3.to_checksum_address(TOKENS[token_symbol][platform_key])
+        usdt = Web3.to_checksum_address(TOKENS["USDT"][platform_key])
 
-        token = Web3.to_checksum_address(token)
-        usdt = Web3.to_checksum_address(usdt)
-        bridge = Web3.to_checksum_address(bridge)
+        bridges = [
+            Web3.to_checksum_address(TOKENS["USDC"][platform_key]),
+            Web3.to_checksum_address(TOKENS["DAI"][platform_key]),
+            Web3.to_checksum_address(TOKENS["FRAX"][platform_key])
+        ]
 
-        paths = [[usdt, token, usdt], [usdt, bridge, token, usdt]]
         contract = web3.eth.contract(address=router_addr, abi=GET_AMOUNTS_OUT_ABI)
         amount_in = 10 ** TOKENS["USDT"]["decimals"]
+
+        paths = [[usdt, token, usdt]]
+        for bridge in bridges:
+            paths.append([usdt, bridge, token, usdt])
 
         for path in paths:
             if not check_pair(factory_addr, path):
@@ -106,18 +111,19 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform):
                 profit = (amount_out / amount_in - 1) * 100
                 print(f"[PROFIT] {token_symbol} via {platform}: {profit:.2f}%")
                 return profit
-            except:
+            except Exception as e:
+                print(f"[ERROR] getAmountsOut failed for {path}: {e}")
                 continue
+
         print(f"[DEBUG] Нет пары USDT↔{token_symbol} (даже через мост) на {platform}")
         return None
+
     except Exception as e:
-        print(f"[DEBUG] Ошибка check_profit для {token_symbol} на {platform}: {e}")
+        print(f"[DEBUG] Ошибка calculate_profit для {token_symbol} на {platform}: {e}")
         return None
 
 def build_url(platform, token_symbol):
     key = ROUTERS[platform]["platform_key"]
-    if not key:
-        return ""
     template = ROUTERS[platform]["url"]
     usdt = TOKENS["USDT"][key]
     token = TOKENS[token_symbol][key]
@@ -137,7 +143,7 @@ def main():
     while True:
         now = get_local_time()
         if last_hb is None or (now - last_hb).total_seconds() >= 30 * 60:
-            send_telegram(f"🗢 Bot alive: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+            send_telegram(f"📢 Bot alive: {now.strftime('%Y-%m-%d %H:%M:%S')}")
             last_hb = now
 
         for token in TOKENS:
@@ -171,9 +177,10 @@ def main():
                 if rp is not None:
                     send_telegram(f"✅ Done {info['token']} on {info['platform']}\nPredicted: {info['profit']:.2f}%\nActual: {rp:.2f}%\n{info['url']}")
                 else:
-                    send_telegram(f"❌ Could not fetch actual for {info['token']} on {info['platform']}")
+                    send_telegram(f"⚠️ Could not fetch actual for {info['token']} on {info['platform']}")
                 tracked.pop(key)
         time.sleep(10)
 
 if __name__ == "__main__":
     main()
+    
