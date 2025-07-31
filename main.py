@@ -1,4 +1,3 @@
-
 import os, time, datetime, requests, pandas as pd
 from web3 import Web3
 from dotenv import load_dotenv
@@ -109,10 +108,10 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform):
                 return profit
             except:
                 continue
-        print(f"[DEBUG] ÐÐµÑ Ð¿Ð°ÑÑ USDTâ{token_symbol} (Ð´Ð°Ð¶Ðµ ÑÐµÑÐµÐ· Ð¼Ð¾ÑÑ) Ð½Ð° {platform}")
+        print(f"[DEBUG] Нет пары USDT↔{token_symbol} (даже через мост) на {platform}")
         return None
     except Exception as e:
-        print(f"[DEBUG] ÐÑÐ¸Ð±ÐºÐ° check_profit Ð´Ð»Ñ {token_symbol} Ð½Ð° {platform}: {e}")
+        print(f"[DEBUG] Ошибка check_profit для {token_symbol} на {platform}: {e}")
         return None
 
 def build_url(platform, token_symbol):
@@ -128,8 +127,8 @@ def get_local_time():
     return datetime.datetime.now(LONDON_TZ)
 
 def main():
-    print("ð¡ Bot started")
-    send_telegram("ð¤ Bot launched")
+    print("⚡ Bot started")
+    send_telegram("🤖 Bot launched")
     tracked = {}
     min_profit = 0.1
     trade_dur = 4 * 60
@@ -138,7 +137,7 @@ def main():
     while True:
         now = get_local_time()
         if last_hb is None or (now - last_hb).total_seconds() >= 30 * 60:
-            send_telegram(f"ð¢ Bot alive: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+            send_telegram(f"🗢 Bot alive: {now.strftime('%Y-%m-%d %H:%M:%S')}")
             last_hb = now
 
         for token in TOKENS:
@@ -152,7 +151,7 @@ def main():
                 if key in tracked and (now - tracked[key]["start"]).total_seconds() < trade_dur + 60:
                     continue
                 url = build_url(platform, token)
-                send_telegram(f"ð USDTâ{token}âUSDT\nPlatform: {platform}\nEst. profit: {profit:.2f}% ð¸\n{url}")
+                send_telegram(f"📉 USDT→{token}→USDT\nPlatform: {platform}\nEst. profit: {profit:.2f}% 💸\n{url}")
                 tracked[key] = {
                     "start": now,
                     "profit": profit,
@@ -170,9 +169,9 @@ def main():
                     info["platform"]
                 )
                 if rp is not None:
-                    send_telegram(f"â Done {info['token']} on {info['platform']}\nPredicted: {info['profit']:.2f}%\nActual: {rp:.2f}%\n{info['url']}")
+                    send_telegram(f"✅ Done {info['token']} on {info['platform']}\nPredicted: {info['profit']:.2f}%\nActual: {rp:.2f}%\n{info['url']}")
                 else:
-                    send_telegram(f"â ï¸ Could not fetch actual for {info['token']} on {info['platform']}")
+                    send_telegram(f"❌ Could not fetch actual for {info['token']} on {info['platform']}")
                 tracked.pop(key)
         time.sleep(10)
 
