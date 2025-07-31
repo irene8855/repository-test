@@ -12,7 +12,6 @@ load_dotenv("secrets.env")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Список RPC
 RPC_LIST = [
     os.getenv("POLYGON_RPC"),
     "https://polygon-rpc.com",
@@ -22,7 +21,6 @@ RPC_LIST = [
     "https://1rpc.io/matic",
 ]
 
-# Поиск работающего RPC
 def get_working_web3():
     for rpc in RPC_LIST:
         try:
@@ -36,10 +34,8 @@ def get_working_web3():
             print(f"[RPC ERROR] {rpc} - {e}")
     raise Exception("❌ No working RPC found")
 
-# Web3
 web3 = get_working_web3()
 
-# Роутеры (только V2)
 ROUTERS = {
     "SushiSwap": {
         "router_address": web3.to_checksum_address("0x1b02da8cb0d097eb8d57a175b88c7d8b47997506"),
@@ -47,7 +43,6 @@ ROUTERS = {
     },
 }
 
-# Токены
 TOKENS = {
     "USDT": web3.to_checksum_address("0xc2132D05D31c914a87C6611C10748AaCbA6cD43E"),
     "DAI": web3.to_checksum_address("0x8f3cf7ad23cd3cadbd9735aff958023239c6a063"),
@@ -60,10 +55,8 @@ TOKENS = {
     "SAND": web3.to_checksum_address("0xbbba073c31bf03b8acf7c28ef0738decf3695683"),
 }
 
-# ABI
 GET_AMOUNTS_OUT_ABI = '[{"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"}],"name":"getAmountsOut","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"}]'
 
-# Telegram
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
@@ -76,35 +69,41 @@ def send_telegram(message):
     except Exception as e:
         print(f"[telegram] ❌ Exception: {e}")
 
-# Проверка прибыли
 def calculate_profit(router_address, token):
     try:
         contract = web3.eth.contract(address=router_address, abi=GET_AMOUNTS_OUT_ABI)
-        amount_in = 10**6  # 1 USDT
+        amount_in = 10**6  # 1 USDT (6 decimals)
 
-        # Проверка путей
+        # Направление USDT → token
         try:
-            contract.functions.getAmountsOut(amount_in, [TOKENS["USDT"], TOKENS[token]]).call()
-            contract.functions.getAmountsOut(amount_in, [TOKENS[token], TOKENS["USDT"]]).call()
-        except:
+            out1 = contract.functions.getAmountsOut(amount_in, [TOKENS["USDT"], TOKENS[token]]).call()
+        except Exception as e1:
+            print(f"[calculate_profit] ❌ USDT → {token} не сработал: {e1}")
             return None
 
-        path = [TOKENS["USDT"], TOKENS[token], TOKENS["USDT"]]
-        result = contract.functions.getAmountsOut(amount_in, path).call()
-        amount_out = result[-1]
-        if amount_out == 0:
+        # Направление token → USDT
+        try:
+            back = contract.functions.getAmountsOut(out1[-1], [TOKENS[token], TOKENS["USDT"]]).call()
+        except Exception as e2:
+            print(f"[calculate_profit] ❌ {token} → USDT не сработал: {e2}")
             return None
+
+        amount_out = back[-1]
+        if amount_out == 0:
+            print(f"[calculate_profit] ❌ 0 на выходе при {token}")
+            return None
+
         profit = (amount_out / amount_in - 1) * 100
+        print(f"[calculate_profit] ✅ {token}: profit = {round(profit, 4)}%")
         return profit
+
     except Exception as e:
-        print(f"[ERROR calculate_profit] {token} - {e}")
+        print(f"[calculate_profit] ❌ Общая ошибка для {token}: {e}")
         return None
 
-# URL
 def build_url(platform, token):
     return ROUTERS[platform]["url"].format("USDT", TOKENS[token])
 
-# Логирование
 def log_trade(data):
     file = "historical.csv"
     df = pd.DataFrame([data])
@@ -118,16 +117,15 @@ def main():
     send_telegram("🤖 Бот запущен и следит за рынком")
 
     tracked = {}
-    min_profit = 0.1  # минимум %
-    trade_duration = 4 * 60  # 4 минуты
+    min_profit = 0.1
+    trade_duration = 4 * 60
     last_heartbeat = None
-    heartbeat_interval = 30 * 60  # 30 минут
+    heartbeat_interval = 30 * 60
 
     while True:
         try:
             now = datetime.datetime.now()
 
-            # ⏱️ Heartbeat
             if (last_heartbeat is None) or ((now - last_heartbeat).total_seconds() >= heartbeat_interval):
                 heartbeat_msg = f"🟢 Бот жив: {now.strftime('%Y-%m-%d %H:%M:%S')}"
                 print(heartbeat_msg)
@@ -140,32 +138,20 @@ def main():
 
                 for platform, info in ROUTERS.items():
                     print(f"[DEBUG] Проверка {token} через {platform}")
-
                     profit = calculate_profit(info["router_address"], token)
 
-                    if profit is None:
-                        print(f"[DEBUG] ❌ Не удалось рассчитать прибыль для {token} ({platform})")
-                        continue
-
-                    print(f"[DEBUG] ➕ Прибыль для {token} через {platform}: {round(profit, 4)}%")
-
-                    if profit < min_profit:
-                        print(f"[DEBUG] ⚠️ Прибыль ниже порога ({min_profit}%) — пропуск")
+                    if profit is None or profit < min_profit:
+                        print(f"[DEBUG] ❌ Недостаточная или нулевая прибыль по {token} ({platform})")
                         continue
 
                     last = tracked.get((token, platform))
-                    if last:
-                        delta = (now - last["start"]).total_seconds()
-                        print(f"[DEBUG] 🔁 Уже отслеживается {token} через {platform}, прошло {delta:.1f} сек")
-                        if delta < trade_duration + 60:
-                            continue
+                    if last and (now - last["start"]).total_seconds() < trade_duration + 60:
+                        continue
 
-                    # 📡 Отправка сигнала
                     start = now
                     end = now + datetime.timedelta(seconds=trade_duration)
                     url = build_url(platform, token)
 
-                    print(f"[ALERT] 🚨 Сделка найдена: {token} ({round(profit, 2)}%) через {platform}")
                     send_telegram(
                         f"📉USDT→{token}→USDT📈\n"
                         f"PLATFORM: {platform}\n"
@@ -182,18 +168,14 @@ def main():
                         "url": url
                     }
 
-            # ⏳ Завершение сделок
             for key, info in list(tracked.items()):
                 now = datetime.datetime.now()
                 elapsed = (now - info["start"]).total_seconds()
                 if elapsed >= trade_duration:
                     token, platform = key
-                    print(f"[DEBUG] ⏰ Завершение сделки {token} ({platform}) после {elapsed:.1f} сек")
-
                     real_profit = calculate_profit(ROUTERS[platform]["router_address"], token)
 
                     if real_profit is not None:
-                        print(f"[RESULT] ✅ {token} ({platform}) фактическая прибыль: {round(real_profit,2)}%")
                         send_telegram(
                             f"✅ Сделка завершена ({token} на {platform})\n"
                             f"Предсказано: {round(info['profit'],2)}%\n"
@@ -201,7 +183,6 @@ def main():
                             f"{info['url']}"
                         )
                     else:
-                        print(f"[RESULT] ⚠️ Не удалось получить фактическую прибыль по {token} ({platform})")
                         send_telegram(
                             f"⚠️ Не удалось получить фактическую прибыль по {token} ({platform})"
                         )
@@ -213,7 +194,6 @@ def main():
                         "predicted_profit": round(info["profit"], 4),
                         "real_profit": round(real_profit, 4) if real_profit else None
                     })
-
                     tracked.pop(key)
 
             time.sleep(10)
