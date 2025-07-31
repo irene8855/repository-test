@@ -133,21 +133,34 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform):
         if not platform_key:
             return None
 
-        tok = TOKENS[token_symbol]
-        tok_addr = tok.get(platform_key)
-        usdt_addr = TOKENS["USDT"].get(platform_key)
+        tok = TOKENS.get(token_symbol)
+        usdt = TOKENS.get("USDT")
+        if not tok or not usdt:
+            print(f"[calculate_profit] Missing token data for {token_symbol}")
+            return None
 
-        if not has_pair(factory_addr, Web3.to_checksum_address(usdt_addr), Web3.to_checksum_address(tok_addr)):
+        tok_addr = tok.get(platform_key)
+        usdt_addr = usdt.get(platform_key)
+        if not tok_addr or not usdt_addr:
+            print(f"[calculate_profit] Missing token address for {token_symbol} on {platform}")
+            return None
+
+        tok_addr = Web3.to_checksum_address(tok_addr)
+        usdt_addr = Web3.to_checksum_address(usdt_addr)
+
+        if not has_pair(factory_addr, usdt_addr, tok_addr):
             print(f"[DEBUG] Нет пары USDT↔{token_symbol} на {platform}")
             return None
 
         contract = web3.eth.contract(address=router_addr, abi=GET_AMOUNTS_OUT_ABI)
-        amount_in = 10 ** TOKENS["USDT"]["decimals"]
-        path = [Web3.to_checksum_address(usdt_addr), Web3.to_checksum_address(tok_addr), Web3.to_checksum_address(usdt_addr)]
+        amount_in = 10 ** usdt["decimals"]
+        path = [usdt_addr, tok_addr, usdt_addr]
+
         result = contract.functions.getAmountsOut(amount_in, path).call()
         out = result[-1]
         if out == 0:
             return None
+
         profit = (out / amount_in - 1) * 100
         print(f"[PROFIT] {token_symbol} via {platform}: {profit:.2f}%")
         return profit
@@ -156,13 +169,25 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform):
         return None
 
 def build_url(platform, token_symbol):
-    platform_key = ROUTERS[platform]["platform_key"]
-    if not platform_key:
+    try:
+        platform_key = ROUTERS[platform]["platform_key"]
+        if not platform_key:
+            return None
+
+        tok = TOKENS.get(token_symbol)
+        usdt = TOKENS.get("USDT")
+        if not tok or not usdt:
+            return None
+
+        tok_addr = tok.get(platform_key)
+        usdt_addr = usdt.get(platform_key)
+        if not tok_addr or not usdt_addr:
+            return None
+
+        return ROUTERS[platform]["url"].format(usdt_addr, tok_addr)
+    except Exception as e:
+        print(f"[build_url] error {token_symbol} on {platform}: {e}")
         return None
-    template = ROUTERS[platform]["url"]
-    usdt = TOKENS["USDT"][platform_key]
-    tok = TOKENS[token_symbol][platform_key]
-    return template.format(usdt, tok)
 
 def log_trade(d):
     file = "historical.csv"
