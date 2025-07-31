@@ -34,60 +34,15 @@ GET_AMOUNTS_OUT_ABI = '[{"inputs":[{"internalType":"uint256","name":"amountIn","
 GET_PAIR_ABI = '[{"constant":true,"inputs":[{"internalType":"address","name":"tokenA","type":"address"},{"internalType":"address","name":"tokenB","type":"address"}],"name":"getPair","outputs":[{"internalType":"address","name":"pair","type":"address"}],"payable":false,"stateMutability":"view","type":"function"}]'
 
 TOKENS = {
-    "USDT": {
-        "symbol": "USDT",
-        "decimals": 6,
-        "sushi": "0xc2132D05D31c914a87C6611C10748AaCbA6cD43E",
-        "quick": "0xc2132D05D31c914a87C6611C10748AaCbA6cD43E"
-    },
-    "DAI": {
-        "symbol": "DAI",
-        "decimals": 18,
-        "sushi": "0x8f3cf7ad23cd3cadbd9735aff958023239c6a063",
-        "quick": "0x8f3cf7ad23cd3cadbd9735aff958023239c6a063"
-    },
-    "USDC": {
-        "symbol": "USDC",
-        "decimals": 6,
-        "sushi": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
-        "quick": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
-    },
-    "FRAX": {
-        "symbol": "FRAX",
-        "decimals": 18,
-        "sushi": "0x45c32fa6df82ead1e2ef74d17b76547eddfaff89",
-        "quick": "0x45c32fa6df82ead1e2ef74d17b76547eddfaff89"
-    },
-    "wstETH": {
-        "symbol": "wstETH",
-        "decimals": 18,
-        "sushi": "0x7f39c581f595b53c5cb19bcd5f5cf9b136097b5a",
-        "quick": "0x7f39c581f595b53c5cb19bcd5f5cf9b136097b5a"
-    },
-    "BET": {
-        "symbol": "BET",
-        "decimals": 18,
-        "sushi": "0x3183a3f59e18beb3214be625e4eb2a49ac03df06",
-        "quick": "0x3183a3f59e18beb3214be625e4eb2a49ac03df06"
-    },
-    "tBTC": {
-        "symbol": "tBTC",
-        "decimals": 18,
-        "sushi": "0x1c5db575e2fec81cbe6718df3b282e4ddbb2aede",
-        "quick": "0x1c5db575e2fec81cbe6718df3b282e4ddbb2aede"
-    },
-    "EMT": {
-        "symbol": "EMT",
-        "decimals": 18,
-        "sushi": "0x1e3a602906a749c6c07127dd3f2d97accb3fda3a",
-        "quick": "0x1e3a602906a749c6c07127dd3f2d97accb3fda3a"
-    },
-    "GMT": {
-        "symbol": "GMT",
-        "decimals": 18,
-        "sushi": "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419",
-        "quick": "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419"
-    }
+    "USDT": {"symbol": "USDT", "decimals": 6, "sushi": "0xc2132D05D31c914a87C6611C10748AaCbA6cD43E", "quick": "0xc2132D05D31c914a87C6611C10748AaCbA6cD43E"},
+    "DAI": {"symbol": "DAI", "decimals": 18, "sushi": "0x8f3cf7ad23cd3cadbd9735aff958023239c6a063", "quick": "0x8f3cf7ad23cd3cadbd9735aff958023239c6a063"},
+    "USDC": {"symbol": "USDC", "decimals": 6, "sushi": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", "quick": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"},
+    "FRAX": {"symbol": "FRAX", "decimals": 18, "sushi": "0x45c32fa6df82ead1e2ef74d17b76547eddfaff89", "quick": "0x45c32fa6df82ead1e2ef74d17b76547eddfaff89"},
+    "wstETH": {"symbol": "wstETH", "decimals": 18, "sushi": "0x7f39c581f595b53c5cb19bcd5f5cf9b136097b5a", "quick": "0x7f39c581f595b53c5cb19bcd5f5cf9b136097b5a"},
+    "BET": {"symbol": "BET", "decimals": 18, "sushi": "0x3183a3f59e18beb3214be625e4eb2a49ac03df06", "quick": "0x3183a3f59e18beb3214be625e4eb2a49ac03df06"},
+    "tBTC": {"symbol": "tBTC", "decimals": 18, "sushi": "0x1c5db575e2fec81cbe6718df3b282e4ddbb2aede", "quick": "0x1c5db575e2fec81cbe6718df3b282e4ddbb2aede"},
+    "EMT": {"symbol": "EMT", "decimals": 18, "sushi": "0x1e3a602906a749c6c07127dd3f2d97accb3fda3a", "quick": "0x1e3a602906a749c6c07127dd3f2d97accb3fda3a"},
+    "GMT": {"symbol": "GMT", "decimals": 18, "sushi": "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419", "quick": "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419"}
 }
 
 ROUTERS = {
@@ -118,13 +73,17 @@ def send_telegram(msg):
     except Exception as e:
         print(f"[telegram] error {e}")
 
-def has_pair(factory_addr, tokA, tokB):
+def has_pair_both_directions(factory_addr, tokenA, tokenB):
     try:
         factory = web3.eth.contract(address=factory_addr, abi=GET_PAIR_ABI)
-        pair = factory.functions.getPair(tokA, tokB).call()
-        return pair and pair != "0x0000000000000000000000000000000000000000"
+        pair1 = factory.functions.getPair(tokenA, tokenB).call()
+        pair2 = factory.functions.getPair(tokenB, tokenA).call()
+        return all([
+            pair1 and pair1 != "0x0000000000000000000000000000000000000000",
+            pair2 and pair2 != "0x0000000000000000000000000000000000000000"
+        ])
     except Exception as e:
-        print(f"[has_pair] {tokA}↔{tokB} error {e}")
+        print(f"[has_pair_both_directions] error {e}")
         return False
 
 def calculate_profit(router_addr, factory_addr, token_symbol, platform):
@@ -132,35 +91,21 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform):
         platform_key = ROUTERS[platform]["platform_key"]
         if not platform_key:
             return None
+        tok = TOKENS[token_symbol]
+        tok_addr = Web3.to_checksum_address(tok[platform_key])
+        usdt_addr = Web3.to_checksum_address(TOKENS["USDT"][platform_key])
 
-        tok = TOKENS.get(token_symbol)
-        usdt = TOKENS.get("USDT")
-        if not tok or not usdt:
-            print(f"[calculate_profit] Missing token data for {token_symbol}")
-            return None
-
-        tok_addr = tok.get(platform_key)
-        usdt_addr = usdt.get(platform_key)
-        if not tok_addr or not usdt_addr:
-            print(f"[calculate_profit] Missing token address for {token_symbol} on {platform}")
-            return None
-
-        tok_addr = Web3.to_checksum_address(tok_addr)
-        usdt_addr = Web3.to_checksum_address(usdt_addr)
-
-        if not has_pair(factory_addr, usdt_addr, tok_addr):
+        if not has_pair_both_directions(factory_addr, usdt_addr, tok_addr):
             print(f"[DEBUG] Нет пары USDT↔{token_symbol} на {platform}")
             return None
 
         contract = web3.eth.contract(address=router_addr, abi=GET_AMOUNTS_OUT_ABI)
-        amount_in = 10 ** usdt["decimals"]
+        amount_in = 10 ** TOKENS["USDT"]["decimals"]
         path = [usdt_addr, tok_addr, usdt_addr]
-
         result = contract.functions.getAmountsOut(amount_in, path).call()
         out = result[-1]
         if out == 0:
             return None
-
         profit = (out / amount_in - 1) * 100
         print(f"[PROFIT] {token_symbol} via {platform}: {profit:.2f}%")
         return profit
@@ -169,25 +114,13 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform):
         return None
 
 def build_url(platform, token_symbol):
-    try:
-        platform_key = ROUTERS[platform]["platform_key"]
-        if not platform_key:
-            return None
-
-        tok = TOKENS.get(token_symbol)
-        usdt = TOKENS.get("USDT")
-        if not tok or not usdt:
-            return None
-
-        tok_addr = tok.get(platform_key)
-        usdt_addr = usdt.get(platform_key)
-        if not tok_addr or not usdt_addr:
-            return None
-
-        return ROUTERS[platform]["url"].format(usdt_addr, tok_addr)
-    except Exception as e:
-        print(f"[build_url] error {token_symbol} on {platform}: {e}")
+    platform_key = ROUTERS[platform]["platform_key"]
+    if not platform_key:
         return None
+    template = ROUTERS[platform]["url"]
+    usdt = TOKENS["USDT"][platform_key]
+    tok = TOKENS[token_symbol][platform_key]
+    return template.format(usdt, tok)
 
 def log_trade(d):
     file = "historical.csv"
