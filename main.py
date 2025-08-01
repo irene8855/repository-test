@@ -7,7 +7,7 @@ load_dotenv("secrets.env")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 LONDON_TZ = pytz.timezone("Europe/London")
-ROUTE_CHECK_INTERVAL_HOURS = int(os.getenv("ROUTE_CHECK_INTERVAL_HOURS", 6))
+ROUTE_CHECK_INTERVAL_HOURS = int(os.getenv("ROUTE_CHECK_INTERVAL_HOURS", 3))
 
 RPC_LIST = [
     os.getenv("POLYGON_RPC"),
@@ -145,37 +145,44 @@ def update_valid_tokens():
 def main():
     print("🚀 Bot started")
     send_telegram("🤖 Bot запущен")
-    tracked = {}
+
     min_profit = 0.1
-    trade_dur = 4 * 60
+    trade_dur = 4 * 60  # 4 минуты
     last_check = None
     last_hb = None
+    tracked = {}
 
     while True:
         now = get_local_time()
 
+        # Запуск проверки пар каждые ROUTE_CHECK_INTERVAL_HOURS часов
         if last_check is None or (now - last_check).total_seconds() >= ROUTE_CHECK_INTERVAL_HOURS * 3600:
             update_valid_tokens()
             last_check = now
 
+        # Периодический "heartbeat" бота в телеграм
         if last_hb is None or (now - last_hb).total_seconds() >= 1800:
             send_telegram(f"🟢 Bot активен: {now.strftime('%Y-%m-%d %H:%M:%S')}")
             last_hb = now
 
+        # Торговля на валидных токенах
         for platform, info in ROUTERS.items():
             tokens = valid_tokens.get(platform, [])
             for token in tokens:
                 profit = calculate_profit(info["router"], info["factory"], token, platform)
-                if profit is None or profit < min_profit: continue
+                if profit is None or profit < min_profit:
+                    continue
                 key = (token, platform)
+                # Проверяем, не занята ли эта пара сейчас торговлей
                 if key in tracked and (now - tracked[key]["start"]).total_seconds() < trade_dur + 60:
                     continue
                 url = build_url(platform, token)
                 send_telegram(f"📈 USDC→{token}→USDC\nPlatform: {platform}\nEst. profit: {profit:.2f}% 💸\n{url}")
                 tracked[key] = {"start": now, "profit": profit, "url": url, "token": token, "platform": platform}
 
+        # Проверяем завершение торговли
         for key, info in list(tracked.items()):
-            if (get_local_time() - info["start"]).total_seconds() >= trade_dur:
+            if (now - info["start"]).total_seconds() >= trade_dur:
                 rp = calculate_profit(ROUTERS[info["platform"]]["router"], ROUTERS[info["platform"]]["factory"], info["token"], info["platform"])
                 if rp is not None:
                     send_telegram(f"✅ Done {info['token']} on {info['platform']}\nPredicted: {info['profit']:.2f}%\nActual: {rp:.2f}%\n{info['url']}")
@@ -186,6 +193,5 @@ def main():
         time.sleep(10)
 
 if __name__ == "__main__":
-    update_valid_tokens()
     main()
     
