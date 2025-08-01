@@ -1,5 +1,4 @@
-import os, time, datetime, requests
-import pandas as pd
+import os, time, datetime, requests, pandas as pd
 from web3 import Web3
 from dotenv import load_dotenv
 import pytz
@@ -31,26 +30,21 @@ def get_working_web3():
 
 web3 = get_working_web3()
 
-# ABIs
 GET_AMOUNTS_OUT_ABI = '[{"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"}],"name":"getAmountsOut","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"}]'
 GET_PAIR_ABI = '[{"constant":true,"inputs":[{"internalType":"address","name":"tokenA","type":"address"},{"internalType":"address","name":"tokenB","type":"address"}],"name":"getPair","outputs":[{"internalType":"address","name":"pair","type":"address"}],"payable":false,"stateMutability":"view","type":"function"}]'
 
-# Tokens
-def checksum(addr):
-    return Web3.to_checksum_address(addr)
+def checksum(addr): return Web3.to_checksum_address(addr)
 
 TOKENS = {
-    "USDT":   {"symbol": "USDT",   "decimals": 6,  "sushi": checksum("0xc2132D05D31c914a87C6611C10748AaCbA6cD43E"), "quick": checksum("0xc2132D05D31c914a87C6611C10748AaCbA6cD43E")},
-    "USDC":   {"symbol": "USDC",   "decimals": 6,  "sushi": checksum("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"), "quick": checksum("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")},
-    "DAI":    {"symbol": "DAI",    "decimals": 18, "sushi": checksum("0x8f3cf7ad23cd3cadbd9735aff958023239c6a063"), "quick": checksum("0x8f3cf7ad23cd3cadbd9735aff958023239c6a063")},
-    "FRAX":   {"symbol": "FRAX",   "decimals": 18, "sushi": checksum("0x45c32fa6df82ead1e2ef74d17b76547eddfaff89"), "quick": checksum("0x45c32fa6df82ead1e2ef74d17b76547eddfaff89")},
-    "WMATIC": {"symbol": "WMATIC", "decimals": 18, "sushi": checksum("0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270"), "quick": checksum("0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270")},
-    "WETH":   {"symbol": "WETH",   "decimals": 18, "sushi": checksum("0x7ceb23fd6bc0add59e62ac25578270cff1b9f619"), "quick": checksum("0x7ceb23fd6bc0add59e62ac25578270cff1b9f619")},
-    "POL":    {"symbol": "POL",    "decimals": 18, "sushi": checksum("0x0000000000000000000000000000000000001010"), "quick": checksum("0x0000000000000000000000000000000000001010")},
-    "SAND":   {"symbol": "SAND",   "decimals": 18, "sushi": checksum("0xbbba073c31bf03b8acf7c28ef0738decf3695683"), "quick": checksum("0xbbba073c31bf03b8acf7c28ef0738decf3695683")},
-    "AAVE":   {"symbol": "AAVE",   "decimals": 18, "sushi": checksum("0xd6df932a45c0f255f85145f286ea0b292b21c90b"), "quick": checksum("0xd6df932a45c0f255f85145f286ea0b292b21c90b")},
-    "LDO":    {"symbol": "LDO",    "decimals": 18, "sushi": checksum("0xc3c7d422809852031b44ab29eec9f1eff2a58756"), "quick": checksum("0xc3c7d422809852031b44ab29eec9f1eff2a58756")},
-    "LINK":   {"symbol": "LINK",   "decimals": 18, "sushi": checksum("0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39"), "quick": checksum("0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39")},
+    "USDT": {"symbol": "USDT", "decimals": 6, "sushi": checksum("0xc2132D05D31c914a87C6611C10748AaCbA6cD43E"), "quick": checksum("0xc2132D05D31c914a87C6611C10748AaCbA6cD43E")},
+    "USDC": {"symbol": "USDC", "decimals": 6, "sushi": checksum("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"), "quick": checksum("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")},
+    "DAI": {"symbol": "DAI", "decimals": 18, "sushi": checksum("0x8f3cf7ad23cd3cadbd9735aff958023239c6a063"), "quick": checksum("0x8f3cf7ad23cd3cadbd9735aff958023239c6a063")},
+    "FRAX": {"symbol": "FRAX", "decimals": 18, "sushi": checksum("0x45c32fa6df82ead1e2ef74d17b76547eddfaff89"), "quick": checksum("0x45c32fa6df82ead1e2ef74d17b76547eddfaff89")},
+    "SAND": {"symbol": "SAND", "decimals": 18, "sushi": checksum("0xbbba073c31bf03b8acf7c28ef0738decf3695683"), "quick": checksum("0xbbba073c31bf03b8acf7c28ef0738decf3695683")},
+    "AAVE": {"symbol": "AAVE", "decimals": 18, "sushi": checksum("0xd6df932a45c0f255f85145f286ea0b292b21c90b"), "quick": checksum("0xd6df932a45c0f255f85145f286ea0b292b21c90b")},
+    "LDO": {"symbol": "LDO", "decimals": 18, "sushi": checksum("0xc3c7d422809852031b44ab29eec9f1eff2a58756"), "quick": checksum("0xc3c7d422809852031b44ab29eec9f1eff2a58756")},
+    "LINK": {"symbol": "LINK", "decimals": 18, "sushi": checksum("0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39"), "quick": checksum("0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39")},
+    "POL": {"symbol": "POL", "decimals": 18, "sushi": checksum("0xE256CF79A8F3BFBE427A0C57A6b5A278EC2AcdC1"), "quick": checksum("0xE256CF79A8F3BFBE427A0C57A6b5A278EC2AcdC1")},
 }
 
 ROUTERS = {
@@ -79,10 +73,11 @@ def check_pair(factory_addr, path):
     try:
         factory = web3.eth.contract(address=factory_addr, abi=GET_PAIR_ABI)
         for i in range(len(path)-1):
-            a = Web3.to_checksum_address(path[i])
-            b = Web3.to_checksum_address(path[i+1])
+            a = checksum(path[i])
+            b = checksum(path[i+1])
             pair = factory.functions.getPair(a, b).call()
-            if pair == "0x0000000000000000000000000000000000000000":
+            print(f"[PAIR DEBUG] getPair({a}, {b}) = {pair}")
+            if pair.lower() == "0x0000000000000000000000000000000000000000":
                 return False
         return True
     except Exception as e:
@@ -91,17 +86,15 @@ def check_pair(factory_addr, path):
 
 def calculate_profit(router_addr, factory_addr, token_symbol, platform):
     try:
-        pk = ROUTERS[platform]["platform_key"]
-        token = TOKENS[token_symbol][pk]
-        usdt = TOKENS["USDT"][pk]
+        platform_key = ROUTERS[platform]["platform_key"]
+        token = TOKENS[token_symbol][platform_key]
+        usdt = TOKENS["USDT"][platform_key]
 
         bridges = [
-            TOKENS["USDC"][pk],
-            TOKENS["DAI"][pk],
-            TOKENS["FRAX"][pk],
-            TOKENS["WMATIC"][pk],
-            TOKENS["WETH"][pk],
-            TOKENS["POL"][pk]
+            TOKENS["USDC"][platform_key],
+            TOKENS["DAI"][platform_key],
+            TOKENS["FRAX"][platform_key],
+            TOKENS["POL"][platform_key]
         ]
 
         contract = web3.eth.contract(address=router_addr, abi=GET_AMOUNTS_OUT_ABI)
@@ -134,10 +127,11 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform):
         return None
 
 def build_url(platform, token_symbol):
-    pk = ROUTERS[platform]["platform_key"]
-    usdt = TOKENS["USDT"][pk]
-    token = TOKENS[token_symbol][pk]
-    return ROUTERS[platform]["url"].format(usdt, token)
+    key = ROUTERS[platform]["platform_key"]
+    template = ROUTERS[platform]["url"]
+    usdt = TOKENS["USDT"][key]
+    token = TOKENS[token_symbol][key]
+    return template.format(usdt, token)
 
 def get_local_time():
     return datetime.datetime.now(LONDON_TZ)
@@ -152,7 +146,7 @@ def main():
 
     while True:
         now = get_local_time()
-        if last_hb is None or (now - last_hb).total_seconds() >= 1800:
+        if last_hb is None or (now - last_hb).total_seconds() >= 30 * 60:
             send_telegram(f"📢 Bot alive: {now.strftime('%Y-%m-%d %H:%M:%S')}")
             last_hb = now
 
