@@ -130,6 +130,24 @@ def build_url(platform, token_symbol):
 def get_local_time():
     return datetime.datetime.now(LONDON_TZ)
 
+def run_check_pairs():
+    send_telegram("🔍 Режим проверки пар запущен")
+    for token in TOKENS:
+        if token == "USDC": continue
+        for platform, info in ROUTERS.items():
+            routes = build_all_routes(token)
+            valid = 0
+            total = 0
+            for route in routes:
+                path = [TOKENS[s] for s in route] + [TOKENS["USDC"]]
+                total += 1
+                if check_pair(info["factory"], path):
+                    valid += 1
+            msg = f"✔️ {token} on {platform}: {valid}/{total} маршрутов валидны"
+            print(msg)
+            send_telegram(msg)
+    send_telegram("✅ Проверка пар завершена")
+
 def main():
     print("🚀 Bot started")
     send_telegram("🤖 Bot launched")
@@ -168,5 +186,8 @@ def main():
         time.sleep(10)
 
 if __name__ == "__main__":
-    main()
-    
+    if os.getenv("PAIR_CHECK_MODE") == "1":
+        run_check_pairs()
+    else:
+        main()
+        
