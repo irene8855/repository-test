@@ -1,14 +1,9 @@
-import os
-import time
-import datetime
-import requests
-import pandas as pd
+import os, time, datetime, requests, pandas as pd
 from web3 import Web3
 from dotenv import load_dotenv
 import pytz
 
 load_dotenv("secrets.env")
-
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 LONDON_TZ = pytz.timezone("Europe/London")
@@ -40,45 +35,35 @@ GET_PAIR_ABI = '[{"constant":true,"inputs":[{"internalType":"address","name":"to
 def checksum(addr): return Web3.to_checksum_address(addr)
 
 TOKENS = {
-    "USDT": checksum("0xc2132D05D31C914a87C6611C10748AaCbA6cD43E"),
-    "USDC": checksum("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"),
-    "DAI":  checksum("0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063"),
-    "FRAX": checksum("0x45c32fA6DF82ead1e2EF74d17b76547EDdFaFF89"),
-    "SAND": checksum("0xbbba073C31bF03b8ACf7c28EF0738DeCF3695683"),
-    "AAVE": checksum("0xD6DF932A45C0f255f85145f286eA0B292B21C90B"),
-    "LDO":  checksum("0xC3C7d422809852031b44ab29eec9f1eff2a58756"),
-    "LINK": checksum("0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39"),
-    "POL":  checksum("0xE256Cf79a8f3bFbE427A0c57a6B5a278eC2acDC1"),
-    "WPOL": checksum("0xf62f05d5De64AbD38eDd17A8fCfBF8336fB9f2c2"),
+    "USDT":  checksum("0xc2132D05D31C914a87C6611C10748AaCbA6cD43E"),
+    "USDC":  checksum("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"),
+    "DAI":   checksum("0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063"),
+    "FRAX":  checksum("0x45c32fA6DF82ead1e2EF74d17b76547EDdFaFF89"),
+    "SAND":  checksum("0xbbba073C31bF03b8ACf7c28EF0738DeCF3695683"),
+    "AAVE":  checksum("0xD6DF932A45C0f255f85145f286eA0B292B21C90B"),
+    "LDO":   checksum("0xC3C7d422809852031b44ab29eec9f1eff2a58756"),
+    "LINK":  checksum("0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39"),
+    "POL":   checksum("0xE256Cf79a8f3bFbE427A0c57a6B5a278eC2acDC1"),
+    "WPOL":  checksum("0xf62f05d5De64AbD38eDd17A8fCfBF8336fB9f2c2"),
+    "wstETH":checksum("0x7f39c581f595b53c5cb5bbf5b5f27aa49a3a7e3d"),
+    "BET":   checksum("0x3183a3f59e18beb3214be625e4eb2a49ac03df06"),
+    "tBTC":  checksum("0x1c5db575e2fec81cbe6718df3b282e4ddbb2aede"),
+    "EMT":   checksum("0x1e3a602906a749c6c07127dd3f2d97accb3fda3a"),
+    "GMT":   checksum("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419"),
 }
 
-DECIMALS = {
-    "USDT": 6,
-    "USDC": 6,
-    "DAI": 18,
-    "FRAX": 18,
-    "SAND": 18,
-    "AAVE": 18,
-    "LDO": 18,
-    "LINK": 18,
-    "POL": 18,
-    "WPOL": 18,
-}
-
-BASE = "USDC"  # базовый токен для маршрутов
+DECIMALS = {sym: (6 if sym in ["USDT","USDC"] else 18) for sym in TOKENS}
 
 ROUTERS = {
     "SushiSwap": {
         "router": checksum("0x1b02da8cb0d097eb8d57a175b88c7d8b47997506"),
         "factory": checksum("0xc35dadb65012ec5796536bd9864ed8773abc74c4"),
-        "url": "https://www.sushi.com/swap?inputCurrency={}&outputCurrency={}",
-        "key": "SushiSwap"
+        "url": "https://www.sushi.com/swap?inputCurrency={}&outputCurrency={}"
     },
     "Quickswap": {
         "router": checksum("0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff"),
         "factory": checksum("0x5757371414417b8c6caad45baef941abc7d3ab32"),
-        "url": "https://quickswap.exchange/#/swap?inputCurrency={}&outputCurrency={}",
-        "key": "Quickswap"
+        "url": "https://quickswap.exchange/#/swap?inputCurrency={}&outputCurrency={}"
     }
 }
 
@@ -92,9 +77,8 @@ def send_telegram(msg):
 def check_pair(factory_addr, path):
     try:
         factory = web3.eth.contract(address=factory_addr, abi=GET_PAIR_ABI)
-        for i in range(len(path) - 1):
-            a = checksum(path[i])
-            b = checksum(path[i+1])
+        for i in range(len(path)-1):
+            a = checksum(path[i]); b = checksum(path[i+1])
             pair = factory.functions.getPair(a, b).call()
             print(f"[PAIR DEBUG] getPair({a}, {b}) = {pair}")
             if pair.lower() == "0x0000000000000000000000000000000000000000":
@@ -104,52 +88,42 @@ def check_pair(factory_addr, path):
         print(f"[check_pair] {e}")
         return False
 
-def build_trade_path(input_symbol, output_symbol):
-    in_tok = TOKENS[input_symbol]
-    out_tok = TOKENS[output_symbol]
-    if input_symbol == "USDT" and output_symbol == BASE:
-        return [in_tok, TOKENS["USDC"]]
-    if input_symbol == BASE and output_symbol == "USDT":
-        return [in_tok, TOKENS["USDT"]]
-    if input_symbol == "USDT":
-        return [in_tok, TOKENS["USDC"], out_tok]
-    if output_symbol == "USDT":
-        return [in_tok, TOKENS["USDC"], TOKENS["USDT"]]
-    return [in_tok, out_tok]
+def build_all_routes(token_symbol):
+    base_list = list(TOKENS.keys())
+    routes = []
+    routes.append([token_symbol])
+    for mid in base_list:
+        if mid != token_symbol:
+            routes.append([token_symbol, mid])
+            for mid2 in base_list:
+                if mid2 not in {token_symbol, mid}:
+                    routes.append([token_symbol, mid, mid2])
+    return routes
 
 def calculate_profit(router_addr, factory_addr, token_symbol, platform):
     try:
-        base = TOKENS[BASE]
-        token = TOKENS[token_symbol]
-        bridges = [TOKENS[x] for x in ["USDC", "DAI", "FRAX", "POL", "WPOL"]]
-
+        base = TOKENS["USDC"]
+        amount_in = 10 ** DECIMALS["USDC"]
         contract = web3.eth.contract(address=router_addr, abi=GET_AMOUNTS_OUT_ABI)
-        amount_in = 10 ** DECIMALS[BASE]
 
-        paths = [[base, token, base]] + [[base, b, token, base] for b in bridges]
-        for path in paths:
-            if not check_pair(factory_addr, path):
-                continue
-            try:
-                res = contract.functions.getAmountsOut(amount_in, path).call()
-                out = res[-1]
-                if out == 0:
-                    continue
-                profit = (out / amount_in - 1) * 100
-                print(f"[PROFIT] {token_symbol} via {platform}: {profit:.2f}%")
-                return profit
-            except Exception as e:
-                print(f"[ERROR] getAmountsOut for {path}: {e}")
-                continue
-
-        print(f"[DEBUG] Нет пары {BASE}↔{token_symbol} на {platform}")
+        all_routes = build_all_routes(token_symbol)
+        for route in all_routes:
+            path = [TOKENS[s] for s in route] + [base]
+            if not check_pair(factory_addr, path): continue
+            res = contract.functions.getAmountsOut(amount_in, path).call()
+            amt = res[-1]
+            if amt <= 0: continue
+            profit = (amt / amount_in - 1) * 100
+            print(f"[PROFIT] {token_symbol} route {route + ['USDC']}: {profit:.2f}%")
+            return profit
+        print(f"[DEBUG] no valid route for {token_symbol}")
         return None
     except Exception as e:
         print(f"[calculate_profit] {e}")
         return None
 
 def build_url(platform, token_symbol):
-    base = TOKENS[BASE]
+    base = TOKENS["USDC"]
     tok = TOKENS[token_symbol]
     return ROUTERS[platform]["url"].format(base, tok)
 
@@ -157,7 +131,7 @@ def get_local_time():
     return datetime.datetime.now(LONDON_TZ)
 
 def main():
-    print("💡 Bot started")
+    print("🚀 Bot started")
     send_telegram("🤖 Bot launched")
     tracked = {}
     min_profit = 0.1
@@ -166,31 +140,30 @@ def main():
 
     while True:
         now = get_local_time()
-        if last_hb is None or (now - last_hb).total_seconds() >= 30 * 60:
+        if last_hb is None or (now - last_hb).total_seconds() >= 1800:
             send_telegram(f"🟢 Bot alive: {now.strftime('%Y-%m-%d %H:%M:%S')}")
             last_hb = now
 
         for token in TOKENS:
-            if token == BASE:
-                continue
+            if token == "USDC": continue
             for platform, info in ROUTERS.items():
                 profit = calculate_profit(info["router"], info["factory"], token, platform)
-                if profit is None or profit < min_profit:
-                    continue
+                if profit is None or profit < min_profit: continue
                 key = (token, platform)
                 if key in tracked and (now - tracked[key]["start"]).total_seconds() < trade_dur + 60:
                     continue
                 url = build_url(platform, token)
-                send_telegram(f"📉 {BASE}→{token}→{BASE}\nPlatform: {platform}\nEst. profit: {profit:.2f}% 💸\n{url}")
-                tracked[key] = {"start": now, "profit": profit, "token": token, "platform": platform, "url": url}
+                msg = f"📈 USDC→{token}→USDC\nPlatform: {platform}\nEst. profit: {profit:.2f}% 💸\n{url}"
+                send_telegram(msg)
+                tracked[key] = {"start":now, "profit":profit, "url":url, "token":token, "platform":platform}
 
-        for key, inf in list(tracked.items()):
-            if (get_local_time() - inf["start"]).total_seconds() >= trade_dur:
-                rp = calculate_profit(ROUTERS[inf["platform"]]["router"], ROUTERS[inf["platform"]]["factory"], inf["token"], inf["platform"])
+        for key, info in list(tracked.items()):
+            if (get_local_time() - info["start"]).total_seconds() >= trade_dur:
+                rp = calculate_profit(ROUTERS[info["platform"]]["router"], ROUTERS[info["platform"]]["factory"], info["token"], info["platform"])
                 if rp is not None:
-                    send_telegram(f"✅ Done {inf['token']} on {inf['platform']}\nPredicted: {inf['profit']:.2f}%\nActual: {rp:.2f}%\n{inf['url']}")
+                    send_telegram(f"✅ Done {info['token']} on {info['platform']}\nPredicted: {info['profit']:.2f}%\nActual: {rp:.2f}%\n{info['url']}")
                 else:
-                    send_telegram(f"⚠️ Could not fetch actual for {inf['token']} on {inf['platform']}")
+                    send_telegram(f"⚠️ Could not fetch actual for {info['token']} on {info['platform']}")
                 tracked.pop(key)
         time.sleep(10)
 
