@@ -1,42 +1,51 @@
-import os, time, datetime, requests, pandas as pd
-from web3 import Web3
-from dotenv import load_dotenv
+import os
+import time
+import datetime
 import pytz
+import requests
+from dotenv import load_dotenv
+from web3 import Web3
 
-load_dotenv("secrets.env")
-
+# Загрузка переменных окружения
+load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-ROUTE_CHECK_INTERVAL_HOURS = int(os.getenv("ROUTE_CHECK_INTERVAL_HOURS", 3))
-DEBUG_MODE = os.getenv("DEBUG_MODE", "False").lower() == "true"
+DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
+WEB3_WS = os.getenv("WEB3_WS")
 
+web3 = Web3(Web3.WebsocketProvider(WEB3_WS))
+
+# Временная зона
 LONDON_TZ = pytz.timezone("Europe/London")
+ROUTE_CHECK_INTERVAL_HOURS = 3
 
-RPC_LIST = [
-    os.getenv("POLYGON_RPC"),
-    "https://polygon-rpc.com",
-    "https://rpc.ankr.com/polygon",
-    "https://polygon-bor.publicnode.com",
-    "https://1rpc.io/matic"
-]
+# ABI
+GET_AMOUNTS_OUT_ABI = [{
+    "name": "getAmountsOut",
+    "outputs": [{"internalType": "uint256[]", "name": "", "type": "uint256[]"}],
+    "inputs": [
+        {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+        {"internalType": "address[]", "name": "path", "type": "address[]"}
+    ],
+    "stateMutability": "view",
+    "type": "function"
+}]
 
-def get_working_web3():
-    for rpc in RPC_LIST:
-        try:
-            w3 = Web3(Web3.HTTPProvider(rpc))
-            if w3.is_connected():
-                if DEBUG_MODE: print(f"[RPC CONNECTED] {rpc}")
-                return w3
-        except: continue
-    raise Exception("No working RPC")
+GET_PAIR_ABI = [{
+    "name": "getPair",
+    "outputs": [{"internalType": "address", "name": "pair", "type": "address"}],
+    "inputs": [
+        {"internalType": "address", "name": "tokenA", "type": "address"},
+        {"internalType": "address", "name": "tokenB", "type": "address"}
+    ],
+    "stateMutability": "view",
+    "type": "function"
+}]
 
-web3 = get_working_web3()
+# Хелпер для адресов
+def checksum(addr): return Web3.toChecksumAddress(addr)
 
-GET_AMOUNTS_OUT_ABI = '[{"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"}],"name":"getAmountsOut","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"}]'
-GET_PAIR_ABI = '[{"constant":true,"inputs":[{"internalType":"address","name":"tokenA","type":"address"},{"internalType":"address","name":"tokenB","type":"address"}],"name":"getPair","outputs":[{"internalType":"address","name":"pair","type":"address"}],"payable":false,"stateMutability":"view","type":"function"}]'
-
-def checksum(addr): return Web3.to_checksum_address(addr)
-
+# Токены
 TOKENS = {
     "USDT":  checksum("0xc2132D05D31C914a87C6611C10748AaCbA6cD43E"),
     "USDC":  checksum("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"),
@@ -55,38 +64,41 @@ TOKENS = {
     "GMT":   checksum("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419"),
 }
 
-DECIMALS = {sym: (6 if sym in ["USDT","USDC"] else 18) for sym in TOKENS}
+DECIMALS = {
+    "USDC": 6
+}
 
 ROUTERS = {
-    "SushiSwap": {
-        "router": checksum("0x1b02da8cb0d097eb8d57a175b88c7d8b47997506"),
-        "factory": checksum("0xc35dadb65012ec5796536bd9864ed8773abc74c4"),
-        "url": "https://www.sushi.com/swap?inputCurrency={}&outputCurrency={}"
-    },
-    "Quickswap": {
+    "QuickSwap": {
         "router": checksum("0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff"),
         "factory": checksum("0x5757371414417b8c6caad45baef941abc7d3ab32"),
         "url": "https://quickswap.exchange/#/swap?inputCurrency={}&outputCurrency={}"
     }
 }
 
+# Telegram
 def send_telegram(msg):
     try:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-                      data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            data={"chat_id": TELEGRAM_CHAT_ID, "text": msg}
+        )
     except Exception as e:
         print(f"[telegram] error {e}")
 
+# Проверка маршрутов
 def check_pair(factory_addr, path):
     try:
         factory = web3.eth.contract(address=factory_addr, abi=GET_PAIR_ABI)
-        for i in range(len(path)-1):
-            pair = factory.functions.getPair(path[i], path[i+1]).call()
+        for i in range(len(path) - 1):
+            pair = factory.functions.getPair(path[i], path[i + 1]).call()
             if pair.lower() == "0x0000000000000000000000000000000000000000":
                 return False
         return True
-    except: return False
+    except:
+        return False
 
+# Построение маршрутов
 def build_all_routes(token_symbol):
     base_list = list(TOKENS.keys())
     routes = [[token_symbol]]
@@ -98,6 +110,7 @@ def build_all_routes(token_symbol):
                     routes.append([token_symbol, mid, mid2])
     return routes
 
+# Расчет прибыли
 def calculate_profit(router_addr, factory_addr, token_symbol, platform):
     try:
         base = TOKENS["USDC"]
@@ -123,14 +136,17 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform):
             send_telegram(f"[ERROR] calculate_profit({token_symbol}): {str(e)}")
         return None
 
+# Построение URL
 def build_url(platform, token_symbol):
     base = TOKENS["USDC"]
     tok = TOKENS[token_symbol]
     return ROUTERS[platform]["url"].format(base, tok)
 
+# Время
 def get_local_time():
     return datetime.datetime.now(LONDON_TZ)
 
+# Обновление валидных токенов
 valid_tokens = {}
 
 def update_valid_tokens():
@@ -155,6 +171,7 @@ def update_valid_tokens():
     if DEBUG_MODE:
         send_telegram("✅ Проверка пар завершена")
 
+# Основной цикл
 def main():
     print("🚀 Bot started")
     send_telegram("🤖 Bot запущен")
@@ -187,11 +204,22 @@ def main():
                     continue
                 url = build_url(platform, token)
                 send_telegram(f"📈 USDC→{token}→USDC\nPlatform: {platform}\nEst. profit: {profit:.2f}% 💸\n{url}")
-                tracked[key] = {"start": now, "profit": profit, "url": url, "token": token, "platform": platform}
+                tracked[key] = {
+                    "start": now,
+                    "profit": profit,
+                    "url": url,
+                    "token": token,
+                    "platform": platform
+                }
 
         for key, info in list(tracked.items()):
             if (now - info["start"]).total_seconds() >= trade_dur:
-                rp = calculate_profit(ROUTERS[info["platform"]]["router"], ROUTERS[info["platform"]]["factory"], info["token"], info["platform"])
+                rp = calculate_profit(
+                    ROUTERS[info["platform"]]["router"],
+                    ROUTERS[info["platform"]]["factory"],
+                    info["token"],
+                    info["platform"]
+                )
                 if rp is not None:
                     send_telegram(f"✅ Done {info['token']} on {info['platform']}\nPredicted: {info['profit']:.2f}%\nActual: {rp:.2f}%\n{info['url']}")
                 else:
@@ -200,6 +228,7 @@ def main():
 
         time.sleep(10)
 
+# Запуск
 if __name__ == "__main__":
     main()
     
