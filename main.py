@@ -13,13 +13,11 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
 WEB3_WS = os.getenv("WEB3_WS")
 
-from web3 import Web3
-
 try:
     from web3.providers.websocket import WebsocketProvider
-    web3 = Web3(WebsocketProvider(WEB3_WS))
+    web3_instance = Web3(WebsocketProvider(WEB3_WS))
 except ImportError:
-    web3 = Web3(Web3.WebsocketProvider(WEB3_WS))
+    web3_instance = Web3(Web3.WebsocketProvider(WEB3_WS))
 
 # Временная зона
 LONDON_TZ = pytz.timezone("Europe/London")
@@ -95,7 +93,7 @@ def send_telegram(msg):
 # Проверка маршрутов
 def check_pair(factory_addr, path):
     try:
-        factory = web3.eth.contract(address=factory_addr, abi=GET_PAIR_ABI)
+        factory = web3_instance.eth.contract(address=factory_addr, abi=GET_PAIR_ABI)
         for i in range(len(path) - 1):
             pair = factory.functions.getPair(path[i], path[i + 1]).call()
             if pair.lower() == "0x0000000000000000000000000000000000000000":
@@ -121,7 +119,7 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform):
     try:
         base = TOKENS["USDC"]
         amount_in = 10 ** DECIMALS["USDC"]
-        contract = web3.eth.contract(address=router_addr, abi=GET_AMOUNTS_OUT_ABI)
+        contract = web3_instance.eth.contract(address=router_addr, abi=GET_AMOUNTS_OUT_ABI)
         all_routes = build_all_routes(token_symbol)
 
         for route in all_routes:
