@@ -13,7 +13,13 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
 WEB3_WS = os.getenv("WEB3_WS")
 
-web3 = Web3(Web3.WebsocketProvider(WEB3_WS))
+from web3 import Web3
+
+try:
+    from web3.providers.websocket import WebsocketProvider
+    web3 = Web3(WebsocketProvider(WEB3_WS))
+except ImportError:
+    web3 = Web3(Web3.WebsocketProvider(WEB3_WS))
 
 # Временная зона
 LONDON_TZ = pytz.timezone("Europe/London")
