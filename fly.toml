@@ -1,5 +1,27 @@
-app = "repository-test-updated"
+app = "bot-project"
+
 primary_region = "lhr"
 
-[experimental]
-  auto_rollback = true
+[build]
+  image = "python:3.11-slim"
+
+[env]
+  PYTHONUNBUFFERED = "1"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.tcp_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    restart_limit = 0
