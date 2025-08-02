@@ -5,6 +5,7 @@ import pytz
 import requests
 from dotenv import load_dotenv
 from web3 import Web3
+from web3.providers.websocket import LegacyWebSocketProvider
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -13,8 +14,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
 WEB3_WS = os.getenv("WEB3_WS")
 
-# Создание экземпляра Web3
-web3_instance = Web3(Web3.WebsocketProvider(WEB3_WS))
+# Инициализация Web3
+web3_instance = Web3(LegacyWebSocketProvider(WEB3_WS))
 
 # Временная зона
 LONDON_TZ = pytz.timezone("Europe/London")
@@ -43,8 +44,7 @@ GET_PAIR_ABI = [{
     "type": "function"
 }]
 
-def checksum(addr):
-    return web3_instance.toChecksumAddress(addr)
+def checksum(addr): return web3_instance.toChecksumAddress(addr)
 
 TOKENS = {
     "USDT":  checksum("0xc2132D05D31C914a87C6611C10748AaCbA6cD43E"),
@@ -149,8 +149,7 @@ def update_valid_tokens():
         send_telegram("🔍 Режим проверки пар запущен")
 
     for token in TOKENS:
-        if token == "USDC":
-            continue
+        if token == "USDC": continue
         for platform, info in ROUTERS.items():
             routes = build_all_routes(token)
             valid = sum(1 for route in routes if check_pair(info["factory"], [TOKENS[s] for s in route] + [TOKENS["USDC"]]))
