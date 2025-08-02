@@ -25,10 +25,9 @@ def get_working_web3():
         try:
             w3 = Web3(Web3.HTTPProvider(rpc))
             if w3.is_connected():
-                print(f"[RPC CONNECTED] {rpc}")
+                if DEBUG_MODE: print(f"[RPC CONNECTED] {rpc}")
                 return w3
-        except:
-            continue
+        except: continue
     raise Exception("No working RPC")
 
 web3 = get_working_web3()
@@ -56,7 +55,7 @@ TOKENS = {
     "GMT":   checksum("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419"),
 }
 
-DECIMALS = {sym: (6 if sym in ["USDT", "USDC"] else 18) for sym in TOKENS}
+DECIMALS = {sym: (6 if sym in ["USDT","USDC"] else 18) for sym in TOKENS}
 
 ROUTERS = {
     "SushiSwap": {
@@ -81,15 +80,12 @@ def send_telegram(msg):
 def check_pair(factory_addr, path):
     try:
         factory = web3.eth.contract(address=factory_addr, abi=GET_PAIR_ABI)
-        for i in range(len(path) - 1):
-            a = checksum(path[i])
-            b = checksum(path[i + 1])
-            pair = factory.functions.getPair(a, b).call()
+        for i in range(len(path)-1):
+            pair = factory.functions.getPair(path[i], path[i+1]).call()
             if pair.lower() == "0x0000000000000000000000000000000000000000":
                 return False
         return True
-    except:
-        return False
+    except: return False
 
 def build_all_routes(token_symbol):
     base_list = list(TOKENS.keys())
@@ -107,24 +103,24 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform):
         base = TOKENS["USDC"]
         amount_in = 10 ** DECIMALS["USDC"]
         contract = web3.eth.contract(address=router_addr, abi=GET_AMOUNTS_OUT_ABI)
-
         all_routes = build_all_routes(token_symbol)
+
         for route in all_routes:
             path = [TOKENS[s] for s in route] + [base]
-            if not check_pair(factory_addr, path):
-                continue
-            res = contract.functions.getAmountsOut(amount_in, path).call()
-            amt = res[-1]
-            if amt <= 0:
-                continue
-            profit = (amt / amount_in - 1) * 100
-            if DEBUG_MODE:
-                send_telegram(f"[DEBUG] {platform}: USDC→{'→'.join(route)}→USDC ≈ {profit:.2f}%")
-            return profit
+            if not check_pair(factory_addr, path): continue
+            try:
+                res = contract.functions.getAmountsOut(amount_in, path).call()
+                amt = res[-1]
+                if amt <= 0: continue
+                profit = (amt / amount_in - 1) * 100
+                return profit
+            except Exception as e:
+                if DEBUG_MODE:
+                    send_telegram(f"[ERROR] calculate_profit({token_symbol}): {str(e)}")
         return None
     except Exception as e:
         if DEBUG_MODE:
-            send_telegram(f"[ERROR] calculate_profit({token_symbol}): {e}")
+            send_telegram(f"[ERROR] calculate_profit({token_symbol}): {str(e)}")
         return None
 
 def build_url(platform, token_symbol):
@@ -140,21 +136,24 @@ valid_tokens = {}
 def update_valid_tokens():
     global valid_tokens
     updated = {}
-    send_telegram("🔍 Режим проверки пар запущен")
+    if DEBUG_MODE:
+        send_telegram("🔍 Режим проверки пар запущен")
+
     for token in TOKENS:
         if token == "USDC": continue
         for platform, info in ROUTERS.items():
             routes = build_all_routes(token)
             valid = sum(1 for route in routes if check_pair(info["factory"], [TOKENS[s] for s in route] + [TOKENS["USDC"]]))
-            msg = f"✔️ {token} on {platform}: {valid}/{len(routes)} маршрутов валидны"
             if DEBUG_MODE:
-                send_telegram(msg)
+                send_telegram(f"✔️ {token} on {platform}: {valid}/{len(routes)} маршрутов валидны")
             if valid > 0:
                 updated.setdefault(platform, set()).add(token)
                 if platform not in valid_tokens or token not in valid_tokens[platform]:
                     send_telegram(f"🆕 {token} стал валиден на {platform}")
     valid_tokens = updated
-    send_telegram("✅ Проверка пар завершена")
+
+    if DEBUG_MODE:
+        send_telegram("✅ Проверка пар завершена")
 
 def main():
     print("🚀 Bot started")
