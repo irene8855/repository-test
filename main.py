@@ -5,7 +5,7 @@ import pytz
 import requests
 from dotenv import load_dotenv
 from web3 import Web3
-from web3.providers.websocket import LegacyWebSocketProvider
+from web3.providers.websocket import WebsocketProvider
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -14,8 +14,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
 WEB3_WS = os.getenv("WEB3_WS")
 
-# Инициализация Web3
-web3_instance = Web3(LegacyWebSocketProvider(WEB3_WS))
+# Инициализация Web3 по WebSocket
+web3_instance = Web3(WebsocketProvider(WEB3_WS))
 
 # Временная зона
 LONDON_TZ = pytz.timezone("Europe/London")
