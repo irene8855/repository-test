@@ -13,11 +13,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
 WEB3_WS = os.getenv("WEB3_WS")
 
-try:
-    from web3.providers.websocket import WebsocketProvider
-    web3_instance = Web3(WebsocketProvider(WEB3_WS))
-except ImportError:
-    web3_instance = Web3(Web3.WebsocketProvider(WEB3_WS))
+# Создание экземпляра Web3
+web3_instance = Web3(Web3.WebsocketProvider(WEB3_WS))
 
 # Временная зона
 LONDON_TZ = pytz.timezone("Europe/London")
@@ -46,10 +43,9 @@ GET_PAIR_ABI = [{
     "type": "function"
 }]
 
-# Хелпер для адресов
-def checksum(addr): return Web3.toChecksumAddress(addr)
+def checksum(addr):
+    return web3_instance.toChecksumAddress(addr)
 
-# Токены
 TOKENS = {
     "USDT":  checksum("0xc2132D05D31C914a87C6611C10748AaCbA6cD43E"),
     "USDC":  checksum("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"),
@@ -80,7 +76,6 @@ ROUTERS = {
     }
 }
 
-# Telegram
 def send_telegram(msg):
     try:
         requests.post(
@@ -90,7 +85,6 @@ def send_telegram(msg):
     except Exception as e:
         print(f"[telegram] error {e}")
 
-# Проверка маршрутов
 def check_pair(factory_addr, path):
     try:
         factory = web3_instance.eth.contract(address=factory_addr, abi=GET_PAIR_ABI)
@@ -102,7 +96,6 @@ def check_pair(factory_addr, path):
     except:
         return False
 
-# Построение маршрутов
 def build_all_routes(token_symbol):
     base_list = list(TOKENS.keys())
     routes = [[token_symbol]]
@@ -114,7 +107,6 @@ def build_all_routes(token_symbol):
                     routes.append([token_symbol, mid, mid2])
     return routes
 
-# Расчет прибыли
 def calculate_profit(router_addr, factory_addr, token_symbol, platform):
     try:
         base = TOKENS["USDC"]
@@ -140,17 +132,14 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform):
             send_telegram(f"[ERROR] calculate_profit({token_symbol}): {str(e)}")
         return None
 
-# Построение URL
 def build_url(platform, token_symbol):
     base = TOKENS["USDC"]
     tok = TOKENS[token_symbol]
     return ROUTERS[platform]["url"].format(base, tok)
 
-# Время
 def get_local_time():
     return datetime.datetime.now(LONDON_TZ)
 
-# Обновление валидных токенов
 valid_tokens = {}
 
 def update_valid_tokens():
@@ -160,7 +149,8 @@ def update_valid_tokens():
         send_telegram("🔍 Режим проверки пар запущен")
 
     for token in TOKENS:
-        if token == "USDC": continue
+        if token == "USDC":
+            continue
         for platform, info in ROUTERS.items():
             routes = build_all_routes(token)
             valid = sum(1 for route in routes if check_pair(info["factory"], [TOKENS[s] for s in route] + [TOKENS["USDC"]]))
@@ -175,7 +165,6 @@ def update_valid_tokens():
     if DEBUG_MODE:
         send_telegram("✅ Проверка пар завершена")
 
-# Основной цикл
 def main():
     print("🚀 Bot started")
     send_telegram("🤖 Bot запущен")
@@ -232,7 +221,6 @@ def main():
 
         time.sleep(10)
 
-# Запуск
 if __name__ == "__main__":
     main()
     
