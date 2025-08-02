@@ -44,7 +44,7 @@ GET_PAIR_ABI = [{
     "type": "function"
 }]
 
-def checksum(addr): return web3_instance.toChecksumAddress(addr)
+def checksum(addr): return Web3.to_checksum_address(addr)
 
 TOKENS = {
     "USDT":  checksum("0xc2132D05D31C914a87C6611C10748AaCbA6cD43E"),
