@@ -1,20 +1,11 @@
-# Python
 __pycache__/
-*.py[cod]
+*.pyc
 *.pyo
 *.pyd
-
-# Jupyter
-.ipynb_checkpoints
-
-# Environment and secrets
+env/
+.venv/
+*.env
 .env
-secrets.env
-
-# Logs and output
-*.log
-historical.csv
-
-# Git
-.git
+.git/
 .gitignore
+README.md
