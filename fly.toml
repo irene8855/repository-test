@@ -2,10 +2,13 @@ app = "repository-test-updated"
 primary_region = "lhr"
 
 [build]
-image = "python:3.11-slim"
+dockerfile = "Dockerfile"
 
 [env]
-PYTHONUNBUFFERED = "1"
+# Здесь твои переменные окружения
+# TELEGRAM_TOKEN = "your_telegram_token"
+# TELEGRAM_CHAT_ID = "your_chat_id"
+# DEBUG_MODE = "True"
 
-[experimental]
-auto_rollback = true
+[processes]
+app = "python3 main.py"
