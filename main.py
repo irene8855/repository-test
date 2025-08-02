@@ -4,10 +4,13 @@ from dotenv import load_dotenv
 import pytz
 
 load_dotenv("secrets.env")
+
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-LONDON_TZ = pytz.timezone("Europe/London")
 ROUTE_CHECK_INTERVAL_HOURS = int(os.getenv("ROUTE_CHECK_INTERVAL_HOURS", 3))
+DEBUG_MODE = os.getenv("DEBUG_MODE", "False").lower() == "true"
+
+LONDON_TZ = pytz.timezone("Europe/London")
 
 RPC_LIST = [
     os.getenv("POLYGON_RPC"),
@@ -24,7 +27,8 @@ def get_working_web3():
             if w3.is_connected():
                 print(f"[RPC CONNECTED] {rpc}")
                 return w3
-        except: continue
+        except:
+            continue
     raise Exception("No working RPC")
 
 web3 = get_working_web3()
@@ -52,7 +56,7 @@ TOKENS = {
     "GMT":   checksum("0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419"),
 }
 
-DECIMALS = {sym: (6 if sym in ["USDT","USDC"] else 18) for sym in TOKENS}
+DECIMALS = {sym: (6 if sym in ["USDT", "USDC"] else 18) for sym in TOKENS}
 
 ROUTERS = {
     "SushiSwap": {
@@ -77,13 +81,15 @@ def send_telegram(msg):
 def check_pair(factory_addr, path):
     try:
         factory = web3.eth.contract(address=factory_addr, abi=GET_PAIR_ABI)
-        for i in range(len(path)-1):
-            a = checksum(path[i]); b = checksum(path[i+1])
+        for i in range(len(path) - 1):
+            a = checksum(path[i])
+            b = checksum(path[i + 1])
             pair = factory.functions.getPair(a, b).call()
             if pair.lower() == "0x0000000000000000000000000000000000000000":
                 return False
         return True
-    except: return False
+    except:
+        return False
 
 def build_all_routes(token_symbol):
     base_list = list(TOKENS.keys())
@@ -105,14 +111,21 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform):
         all_routes = build_all_routes(token_symbol)
         for route in all_routes:
             path = [TOKENS[s] for s in route] + [base]
-            if not check_pair(factory_addr, path): continue
+            if not check_pair(factory_addr, path):
+                continue
             res = contract.functions.getAmountsOut(amount_in, path).call()
             amt = res[-1]
-            if amt <= 0: continue
+            if amt <= 0:
+                continue
             profit = (amt / amount_in - 1) * 100
+            if DEBUG_MODE:
+                send_telegram(f"[DEBUG] {platform}: USDC→{'→'.join(route)}→USDC ≈ {profit:.2f}%")
             return profit
         return None
-    except: return None
+    except Exception as e:
+        if DEBUG_MODE:
+            send_telegram(f"[ERROR] calculate_profit({token_symbol}): {e}")
+        return None
 
 def build_url(platform, token_symbol):
     base = TOKENS["USDC"]
@@ -134,7 +147,8 @@ def update_valid_tokens():
             routes = build_all_routes(token)
             valid = sum(1 for route in routes if check_pair(info["factory"], [TOKENS[s] for s in route] + [TOKENS["USDC"]]))
             msg = f"✔️ {token} on {platform}: {valid}/{len(routes)} маршрутов валидны"
-            send_telegram(msg)
+            if DEBUG_MODE:
+                send_telegram(msg)
             if valid > 0:
                 updated.setdefault(platform, set()).add(token)
                 if platform not in valid_tokens or token not in valid_tokens[platform]:
@@ -147,7 +161,7 @@ def main():
     send_telegram("🤖 Bot запущен")
 
     min_profit = 0.1
-    trade_dur = 4 * 60  # 4 минуты
+    trade_dur = 4 * 60
     last_check = None
     last_hb = None
     tracked = {}
@@ -155,17 +169,14 @@ def main():
     while True:
         now = get_local_time()
 
-        # Запуск проверки пар каждые ROUTE_CHECK_INTERVAL_HOURS часов
         if last_check is None or (now - last_check).total_seconds() >= ROUTE_CHECK_INTERVAL_HOURS * 3600:
             update_valid_tokens()
             last_check = now
 
-        # Периодический "heartbeat" бота в телеграм
         if last_hb is None or (now - last_hb).total_seconds() >= 1800:
             send_telegram(f"🟢 Bot активен: {now.strftime('%Y-%m-%d %H:%M:%S')}")
             last_hb = now
 
-        # Торговля на валидных токенах
         for platform, info in ROUTERS.items():
             tokens = valid_tokens.get(platform, [])
             for token in tokens:
@@ -173,14 +184,12 @@ def main():
                 if profit is None or profit < min_profit:
                     continue
                 key = (token, platform)
-                # Проверяем, не занята ли эта пара сейчас торговлей
                 if key in tracked and (now - tracked[key]["start"]).total_seconds() < trade_dur + 60:
                     continue
                 url = build_url(platform, token)
                 send_telegram(f"📈 USDC→{token}→USDC\nPlatform: {platform}\nEst. profit: {profit:.2f}% 💸\n{url}")
                 tracked[key] = {"start": now, "profit": profit, "url": url, "token": token, "platform": platform}
 
-        # Проверяем завершение торговли
         for key, info in list(tracked.items()):
             if (now - info["start"]).total_seconds() >= trade_dur:
                 rp = calculate_profit(ROUTERS[info["platform"]]["router"], ROUTERS[info["platform"]]["factory"], info["token"], info["platform"])
