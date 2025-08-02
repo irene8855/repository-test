@@ -1,17 +1,11 @@
 app = "repository-test-updated"
-
 primary_region = "lhr"
 
 [build]
 image = "python:3.11-slim"
 
 [env]
-PORT = "8080"
+PYTHONUNBUFFERED = "1"
 
-[deploy]
-release_command = "python main.py"
-
-# Disable HTTP services (optional)
-[[services]]
-internal_port = 8080
-protocol = "tcp"
+[experimental]
+auto_rollback = true
