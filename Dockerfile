@@ -1,14 +1,14 @@
+# Используем официальный образ Python
 FROM python:3.11-slim
 
-# Установим рабочую директорию
+# Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Скопируем requirements и установим зависимости
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Скопируем все остальные файлы
+# Копируем файлы проекта
 COPY . .
 
-# Запускаем main.py как основной процесс
-CMD ["python", "main.py"]
+# Обновляем pip и устанавливаем зависимости
+RUN pip install --upgrade pip && pip install -r requirements.txt
+
+# Команда по умолчанию
+CMD ["python3", "main.py"]
