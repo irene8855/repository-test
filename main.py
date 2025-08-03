@@ -14,14 +14,10 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
 WEB3_WS = os.getenv("WEB3_WS")
 
-# Инициализация Web3
 web3_instance = Web3(WebsocketProvider(WEB3_WS))
-
-# Временная зона
 LONDON_TZ = pytz.timezone("Europe/London")
 ROUTE_CHECK_INTERVAL_HOURS = 3
 
-# ABI
 GET_AMOUNTS_OUT_ABI = [{
     "name": "getAmountsOut",
     "outputs": [{"internalType": "uint256[]", "name": "", "type": "uint256[]"}],
@@ -40,6 +36,18 @@ GET_PAIR_ABI = [{
         {"internalType": "address", "name": "tokenA", "type": "address"},
         {"internalType": "address", "name": "tokenB", "type": "address"}
     ],
+    "stateMutability": "view",
+    "type": "function"
+}]
+
+GET_RESERVES_ABI = [{
+    "name": "getReserves",
+    "outputs": [
+        {"internalType": "uint112", "name": "reserve0", "type": "uint112"},
+        {"internalType": "uint112", "name": "reserve1", "type": "uint112"},
+        {"internalType": "uint32", "name": "blockTimestampLast", "type": "uint32"}
+    ],
+    "inputs": [],
     "stateMutability": "view",
     "type": "function"
 }]
@@ -90,28 +98,34 @@ def send_telegram(msg):
     except Exception as e:
         print(f"[telegram] error: {e}")
 
-def check_pair(factory_addr, path):
+def check_pair_and_reserves(factory_addr, path):
     try:
         factory = web3_instance.eth.contract(address=factory_addr, abi=GET_PAIR_ABI)
         for i in range(len(path) - 1):
             pair = factory.functions.getPair(path[i], path[i + 1]).call()
-            time.sleep(0.1)  # 🔹 замедление вызовов
+            time.sleep(0.1)
             if pair.lower() == "0x0000000000000000000000000000000000000000":
+                send_telegram(f"❌ Пара не существует: {path[i]} → {path[i+1]}")
+                return False
+            pair_contract = web3_instance.eth.contract(address=pair, abi=GET_RESERVES_ABI)
+            reserves = pair_contract.functions.getReserves().call()
+            if reserves[0] == 0 or reserves[1] == 0:
+                send_telegram(f"⚠️ Пустая пара: {path[i]} → {path[i+1]}")
                 return False
         return True
     except Exception as e:
         if DEBUG_MODE:
-            send_telegram(f"[ERROR] check_pair: {str(e)}")
+            send_telegram(f"[ERROR] check_pair_and_reserves: {str(e)}")
         return False
 
 def build_all_routes(token_symbol):
-    base_list = list(TOKENS.keys())
+    base_list = [t for t in TOKENS.keys() if t != "USDC"]
     routes = [[token_symbol]]
     for mid in base_list:
-        if mid != token_symbol:
+        if mid != token_symbol and "USDC" not in [token_symbol, mid]:
             routes.append([token_symbol, mid])
             for mid2 in base_list:
-                if mid2 not in {token_symbol, mid}:
+                if mid2 not in {token_symbol, mid} and "USDC" not in [token_symbol, mid, mid2]:
                     routes.append([token_symbol, mid, mid2])
     return routes
 
@@ -126,9 +140,7 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform, min_prof
             if len(route) > 3:
                 continue
             path = [TOKENS[s] for s in route] + [base]
-            if not check_pair(factory_addr, path):
-                if DEBUG_MODE:
-                    send_telegram(f"❌ Invalid path: {route} + USDC")
+            if not check_pair_and_reserves(factory_addr, path):
                 continue
             try:
                 res = contract.functions.getAmountsOut(amount_in, path).call()
@@ -138,12 +150,10 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform, min_prof
                         send_telegram(f"⚠️ Нулевой выход по маршруту: {route}")
                     continue
                 profit = (amt / amount_in - 1) * 100
-
                 if profit >= min_profit:
                     return profit
                 elif DEBUG_MODE and profit > 0:
-                    send_telegram(f"✅ valid path {route} + USDC with {profit:.4f}% profit даже при профите ниже порога")
-
+                    send_telegram(f"✅ Путь {route} + USDC даёт {profit:.4f}%")
             except Exception as e:
                 if DEBUG_MODE:
                     send_telegram(f"[ERROR] route {route}: {str(e)}")
@@ -168,45 +178,35 @@ def update_valid_tokens():
     updated = {}
     if DEBUG_MODE:
         send_telegram("🔍 Началась проверка валидности токенов")
-
     for token in TOKENS:
         if token == "USDC": continue
         for platform, info in ROUTERS.items():
-            routes = build_all_routes(token)
-            routes = [r for r in routes if len(r) <= 3]
-            valid = sum(1 for route in routes if check_pair(info["factory"], [TOKENS[s] for s in route] + [TOKENS["USDC"]]))
+            routes = [r for r in build_all_routes(token) if len(r) <= 3]
+            valid = sum(1 for route in routes if check_pair_and_reserves(info["factory"], [TOKENS[s] for s in route] + [TOKENS["USDC"]]))
             if DEBUG_MODE:
                 send_telegram(f"✔️ {token} на {platform}: {valid}/{len(routes)} валидных маршрутов")
             if valid > 0:
                 updated.setdefault(platform, set()).add(token)
-                if platform not in valid_tokens or token not in valid_tokens[platform]:
-                    send_telegram(f"🆕 {token} стал валиден на {platform}")
     valid_tokens = updated
-
     if DEBUG_MODE:
         send_telegram("✅ Проверка пар завершена")
 
 def main():
     print("🚀 Bot started")
     send_telegram("🤖 Бот запущен")
-
     min_profit = 1.5
     trade_dur = 4 * 60
-    last_check = None
-    last_hb = None
+    last_check = last_hb = None
     tracked = {}
 
     while True:
         now = get_local_time()
-
         if last_check is None or (now - last_check).total_seconds() >= ROUTE_CHECK_INTERVAL_HOURS * 3600:
             update_valid_tokens()
             last_check = now
-
         if last_hb is None or (now - last_hb).total_seconds() >= 1800:
             send_telegram(f"🟢 Бот активен: {now.strftime('%Y-%m-%d %H:%M:%S')}")
             last_hb = now
-
         for platform, info in ROUTERS.items():
             tokens = valid_tokens.get(platform, [])
             for token in tokens:
@@ -225,7 +225,6 @@ def main():
                     "token": token,
                     "platform": platform
                 }
-
         for key, info in list(tracked.items()):
             if (now - info["start"]).total_seconds() >= trade_dur:
                 rp = calculate_profit(
@@ -239,7 +238,6 @@ def main():
                 else:
                     send_telegram(f"⚠️ Не удалось пересчитать {info['token']} на {info['platform']}")
                 tracked.pop(key)
-
         time.sleep(10)
 
 if __name__ == "__main__":
