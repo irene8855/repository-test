@@ -38,7 +38,7 @@ GET_PAIR_ABI = [{
     "outputs": [{"internalType": "address", "name": "pair", "type": "address"}],
     "inputs": [
         {"internalType": "address", "name": "tokenA", "type": "address"},
-        {"internalType": "address", "tokenB", "type": "address"}
+        {"internalType": "address", "name": "tokenB", "type": "address"}
     ],
     "stateMutability": "view",
     "type": "function"
