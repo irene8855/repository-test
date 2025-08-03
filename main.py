@@ -14,8 +14,10 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
 WEB3_WS = os.getenv("WEB3_WS")
 
+# Инициализация Web3
 web3_instance = Web3(WebsocketProvider(WEB3_WS))
 
+# Временная зона
 LONDON_TZ = pytz.timezone("Europe/London")
 ROUTE_CHECK_INTERVAL_HOURS = 3
 
@@ -97,13 +99,16 @@ def check_pair(factory_addr, path):
     try:
         factory = web3_instance.eth.contract(address=factory_addr, abi=GET_PAIR_ABI)
         for i in range(len(path) - 1):
+            if path[i].lower() == "0x0000000000000000000000000000000000000000" or \
+               path[i+1].lower() == "0x0000000000000000000000000000000000000000":
+                return False
             pair = factory.functions.getPair(path[i], path[i + 1]).call()
             if pair.lower() == "0x0000000000000000000000000000000000000000":
                 return False
         return True
-    except Exception as e:
+    except:
         if DEBUG_MODE:
-            send_telegram(f"[ERROR] check_pair: {e}")
+            send_telegram(f"[ERROR] check_pair: execution reverted")
         return False
 
 def build_all_routes(token_symbol):
@@ -117,10 +122,10 @@ def build_all_routes(token_symbol):
                     routes.append([token_symbol, mid, mid2])
     return routes
 
-def calculate_profit(router_addr, factory_addr, token_symbol, platform, min_profit=1.5):
+def calculate_profit(router_addr, factory_addr, token_symbol, platform, min_profit=0.1):
     try:
         base = TOKENS["USDC"]
-        amount_in = 10 ** DECIMALS["USDC"]
+        amount_in = 100 * 10 ** DECIMALS["USDC"]  # теперь 100 USDC
         contract = web3_instance.eth.contract(address=router_addr, abi=GET_AMOUNTS_OUT_ABI)
         all_routes = build_all_routes(token_symbol)
 
@@ -128,26 +133,25 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform, min_prof
             if len(route) > 3:
                 continue
             path = [TOKENS[s] for s in route] + [base]
-
             if not check_pair(factory_addr, path):
                 if DEBUG_MODE:
                     send_telegram(f"❌ Invalid path: {route} + USDC")
                 continue
-
             try:
                 res = contract.functions.getAmountsOut(amount_in, path).call()
                 amt = res[-1]
                 if amt <= 0:
                     if DEBUG_MODE:
-                        send_telegram(f"⚠️ Нулевой выход по маршруту: {route}")
+                        send_telegram(f"⚠️ Нулевой выход по маршруту: {route}, amounts: {res}")
                     continue
                 profit = (amt / amount_in - 1) * 100
-
                 if profit >= min_profit:
                     return profit
                 elif DEBUG_MODE and profit > 0:
                     send_telegram(f"✅ valid path {route} + USDC with {profit:.4f}% profit даже при профите ниже порога")
             except Exception as e:
+                if "INSUFFICIENT_INPUT_AMOUNT" in str(e):
+                    continue
                 if DEBUG_MODE:
                     send_telegram(f"[ERROR] route {route}: {str(e)}")
         return None
@@ -171,10 +175,8 @@ def update_valid_tokens():
     updated = {}
     if DEBUG_MODE:
         send_telegram("🔍 Началась проверка валидности токенов")
-
     for token in TOKENS:
-        if token == "USDC":
-            continue
+        if token == "USDC": continue
         for platform, info in ROUTERS.items():
             routes = build_all_routes(token)
             routes = [r for r in routes if len(r) <= 3]
@@ -183,18 +185,16 @@ def update_valid_tokens():
                 send_telegram(f"✔️ {token} на {platform}: {valid}/{len(routes)} валидных маршрутов")
             if valid > 0:
                 updated.setdefault(platform, set()).add(token)
-                if platform not in valid_tokens or token not in valid_tokens.get(platform, set()):
+                if platform not in valid_tokens or token not in valid_tokens[platform]:
                     send_telegram(f"🆕 {token} стал валиден на {platform}")
     valid_tokens = updated
-
     if DEBUG_MODE:
         send_telegram("✅ Проверка пар завершена")
 
 def main():
     print("🚀 Bot started")
     send_telegram("🤖 Бот запущен")
-
-    min_profit = 1.5
+    min_profit = 1.5  # ты хотел профит от 1.5%
     trade_dur = 4 * 60
     last_check = None
     last_hb = None
