@@ -78,11 +78,6 @@ ROUTERS = {
         "router": checksum("0x1b02da8cb0d097eb8d57a175b88c7d8b47997506"),
         "factory": checksum("0xc35dadb65012ec5796536bd9864ed8773abc74c4"),
         "url": "https://app.sushi.com/swap?inputCurrency={}&outputCurrency={}"
-    },
-    "Uniswap": {
-        "router": checksum("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
-        "factory": checksum("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
-        "url": "https://app.uniswap.org/#/swap?inputCurrency={}&outputCurrency={}&chain=polygon"
     }
 }
 
@@ -99,16 +94,13 @@ def check_pair(factory_addr, path):
     try:
         factory = web3_instance.eth.contract(address=factory_addr, abi=GET_PAIR_ABI)
         for i in range(len(path) - 1):
-            if path[i].lower() == "0x0000000000000000000000000000000000000000" or \
-               path[i+1].lower() == "0x0000000000000000000000000000000000000000":
-                return False
             pair = factory.functions.getPair(path[i], path[i + 1]).call()
             if pair.lower() == "0x0000000000000000000000000000000000000000":
                 return False
         return True
-    except:
+    except Exception as e:
         if DEBUG_MODE:
-            send_telegram(f"[ERROR] check_pair: execution reverted")
+            send_telegram(f"[ERROR] check_pair: {str(e)}")
         return False
 
 def build_all_routes(token_symbol):
@@ -125,7 +117,7 @@ def build_all_routes(token_symbol):
 def calculate_profit(router_addr, factory_addr, token_symbol, platform, min_profit=0.1):
     try:
         base = TOKENS["USDC"]
-        amount_in = 100 * 10 ** DECIMALS["USDC"]  # теперь 100 USDC
+        amount_in = 10 ** DECIMALS["USDC"]
         contract = web3_instance.eth.contract(address=router_addr, abi=GET_AMOUNTS_OUT_ABI)
         all_routes = build_all_routes(token_symbol)
 
@@ -142,16 +134,16 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform, min_prof
                 amt = res[-1]
                 if amt <= 0:
                     if DEBUG_MODE:
-                        send_telegram(f"⚠️ Нулевой выход по маршруту: {route}, amounts: {res}")
+                        send_telegram(f"⚠️ Нулевой выход по маршруту: {route}")
                     continue
                 profit = (amt / amount_in - 1) * 100
+
                 if profit >= min_profit:
                     return profit
                 elif DEBUG_MODE and profit > 0:
                     send_telegram(f"✅ valid path {route} + USDC with {profit:.4f}% profit даже при профите ниже порога")
+
             except Exception as e:
-                if "INSUFFICIENT_INPUT_AMOUNT" in str(e):
-                    continue
                 if DEBUG_MODE:
                     send_telegram(f"[ERROR] route {route}: {str(e)}")
         return None
@@ -175,8 +167,10 @@ def update_valid_tokens():
     updated = {}
     if DEBUG_MODE:
         send_telegram("🔍 Началась проверка валидности токенов")
+
     for token in TOKENS:
-        if token == "USDC": continue
+        if token == "USDC":
+            continue
         for platform, info in ROUTERS.items():
             routes = build_all_routes(token)
             routes = [r for r in routes if len(r) <= 3]
@@ -188,13 +182,15 @@ def update_valid_tokens():
                 if platform not in valid_tokens or token not in valid_tokens[platform]:
                     send_telegram(f"🆕 {token} стал валиден на {platform}")
     valid_tokens = updated
+
     if DEBUG_MODE:
         send_telegram("✅ Проверка пар завершена")
 
 def main():
     print("🚀 Bot started")
     send_telegram("🤖 Бот запущен")
-    min_profit = 1.5  # ты хотел профит от 1.5%
+
+    min_profit = 1.5
     trade_dur = 4 * 60
     last_check = None
     last_hb = None
