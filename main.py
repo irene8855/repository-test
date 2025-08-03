@@ -14,10 +14,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
 WEB3_WS = os.getenv("WEB3_WS")
 
-# Инициализация Web3
 web3_instance = Web3(WebsocketProvider(WEB3_WS))
 
-# Временная зона
 LONDON_TZ = pytz.timezone("Europe/London")
 ROUTE_CHECK_INTERVAL_HOURS = 3
 
@@ -103,7 +101,9 @@ def check_pair(factory_addr, path):
             if pair.lower() == "0x0000000000000000000000000000000000000000":
                 return False
         return True
-    except:
+    except Exception as e:
+        if DEBUG_MODE:
+            send_telegram(f"[ERROR] check_pair: {e}")
         return False
 
 def build_all_routes(token_symbol):
@@ -117,7 +117,7 @@ def build_all_routes(token_symbol):
                     routes.append([token_symbol, mid, mid2])
     return routes
 
-def calculate_profit(router_addr, factory_addr, token_symbol, platform, min_profit=0.1):
+def calculate_profit(router_addr, factory_addr, token_symbol, platform, min_profit=1.5):
     try:
         base = TOKENS["USDC"]
         amount_in = 10 ** DECIMALS["USDC"]
@@ -126,16 +126,20 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform, min_prof
 
         for route in all_routes:
             if len(route) > 3:
-                continue  # исключаем длинные маршруты
+                continue
             path = [TOKENS[s] for s in route] + [base]
+
             if not check_pair(factory_addr, path):
                 if DEBUG_MODE:
                     send_telegram(f"❌ Invalid path: {route} + USDC")
                 continue
+
             try:
                 res = contract.functions.getAmountsOut(amount_in, path).call()
                 amt = res[-1]
                 if amt <= 0:
+                    if DEBUG_MODE:
+                        send_telegram(f"⚠️ Нулевой выход по маршруту: {route}")
                     continue
                 profit = (amt / amount_in - 1) * 100
 
@@ -143,7 +147,6 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform, min_prof
                     return profit
                 elif DEBUG_MODE and profit > 0:
                     send_telegram(f"✅ valid path {route} + USDC with {profit:.4f}% profit даже при профите ниже порога")
-
             except Exception as e:
                 if DEBUG_MODE:
                     send_telegram(f"[ERROR] route {route}: {str(e)}")
@@ -170,16 +173,17 @@ def update_valid_tokens():
         send_telegram("🔍 Началась проверка валидности токенов")
 
     for token in TOKENS:
-        if token == "USDC": continue
+        if token == "USDC":
+            continue
         for platform, info in ROUTERS.items():
             routes = build_all_routes(token)
-            routes = [r for r in routes if len(r) <= 3]  # ограничение длины
+            routes = [r for r in routes if len(r) <= 3]
             valid = sum(1 for route in routes if check_pair(info["factory"], [TOKENS[s] for s in route] + [TOKENS["USDC"]]))
             if DEBUG_MODE:
                 send_telegram(f"✔️ {token} на {platform}: {valid}/{len(routes)} валидных маршрутов")
             if valid > 0:
                 updated.setdefault(platform, set()).add(token)
-                if platform not in valid_tokens or token not in valid_tokens[platform]:
+                if platform not in valid_tokens or token not in valid_tokens.get(platform, set()):
                     send_telegram(f"🆕 {token} стал валиден на {platform}")
     valid_tokens = updated
 
@@ -190,7 +194,7 @@ def main():
     print("🚀 Bot started")
     send_telegram("🤖 Бот запущен")
 
-    min_profit = 0.1
+    min_profit = 1.5
     trade_dur = 4 * 60
     last_check = None
     last_hb = None
@@ -213,7 +217,6 @@ def main():
                 profit = calculate_profit(info["router"], info["factory"], token, platform, min_profit=min_profit)
                 if profit is None:
                     continue
-                # profit здесь гарантированно >= min_profit (иначе None)
                 key = (token, platform)
                 if key in tracked and (now - tracked[key]["start"]).total_seconds() < trade_dur + 60:
                     continue
