@@ -73,6 +73,16 @@ ROUTERS = {
         "router": checksum("0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff"),
         "factory": checksum("0x5757371414417b8c6caad45baef941abc7d3ab32"),
         "url": "https://quickswap.exchange/#/swap?inputCurrency={}&outputCurrency={}"
+    },
+    "SushiSwap": {
+        "router": checksum("0x1b02da8cb0d097eb8d57a175b88c7d8b47997506"),
+        "factory": checksum("0xc35dadb65012ec5796536bd9864ed8773abc74c4"),
+        "url": "https://app.sushi.com/swap?inputCurrency={}&outputCurrency={}"
+    },
+    "Uniswap": {
+        "router": checksum("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
+        "factory": checksum("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
+        "url": "https://app.uniswap.org/#/swap?inputCurrency={}&outputCurrency={}&chain=polygon"
     }
 }
 
@@ -115,6 +125,8 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform):
         all_routes = build_all_routes(token_symbol)
 
         for route in all_routes:
+            if len(route) > 3:
+                continue  # исключаем длинные маршруты
             path = [TOKENS[s] for s in route] + [base]
             if not check_pair(factory_addr, path):
                 if DEBUG_MODE:
@@ -126,8 +138,7 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform):
                 if amt <= 0:
                     continue
                 profit = (amt / amount_in - 1) * 100
-                if DEBUG_MODE:
-                    send_telegram(f"🔁 Path: {route} → USDC\nProfit: {profit:.4f}%")
+                send_telegram(f"✅ valid path {route} + USDC with {profit:.4f}% profit")
                 return profit
             except Exception as e:
                 if DEBUG_MODE:
@@ -158,6 +169,7 @@ def update_valid_tokens():
         if token == "USDC": continue
         for platform, info in ROUTERS.items():
             routes = build_all_routes(token)
+            routes = [r for r in routes if len(r) <= 3]  # ограничение длины
             valid = sum(1 for route in routes if check_pair(info["factory"], [TOKENS[s] for s in route] + [TOKENS["USDC"]]))
             if DEBUG_MODE:
                 send_telegram(f"✔️ {token} на {platform}: {valid}/{len(routes)} валидных маршрутов")
