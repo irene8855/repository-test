@@ -38,7 +38,7 @@ GET_PAIR_ABI = [{
     "outputs": [{"internalType": "address", "name": "pair", "type": "address"}],
     "inputs": [
         {"internalType": "address", "name": "tokenA", "type": "address"},
-        {"internalType": "address", "name": "tokenB", "type": "address"}
+        {"internalType": "address", "tokenB", "type": "address"}
     ],
     "stateMutability": "view",
     "type": "function"
@@ -117,7 +117,7 @@ def build_all_routes(token_symbol):
                     routes.append([token_symbol, mid, mid2])
     return routes
 
-def calculate_profit(router_addr, factory_addr, token_symbol, platform):
+def calculate_profit(router_addr, factory_addr, token_symbol, platform, min_profit=0.1):
     try:
         base = TOKENS["USDC"]
         amount_in = 10 ** DECIMALS["USDC"]
@@ -138,8 +138,12 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform):
                 if amt <= 0:
                     continue
                 profit = (amt / amount_in - 1) * 100
-                send_telegram(f"✅ valid path {route} + USDC with {profit:.4f}% profit")
-                return profit
+
+                if profit >= min_profit:
+                    return profit
+                elif DEBUG_MODE and profit > 0:
+                    send_telegram(f"✅ valid path {route} + USDC with {profit:.4f}% profit даже при профите ниже порога")
+
             except Exception as e:
                 if DEBUG_MODE:
                     send_telegram(f"[ERROR] route {route}: {str(e)}")
@@ -206,9 +210,10 @@ def main():
         for platform, info in ROUTERS.items():
             tokens = valid_tokens.get(platform, [])
             for token in tokens:
-                profit = calculate_profit(info["router"], info["factory"], token, platform)
-                if profit is None or profit < min_profit:
+                profit = calculate_profit(info["router"], info["factory"], token, platform, min_profit=min_profit)
+                if profit is None:
                     continue
+                # profit здесь гарантированно >= min_profit (иначе None)
                 key = (token, platform)
                 if key in tracked and (now - tracked[key]["start"]).total_seconds() < trade_dur + 60:
                     continue
