@@ -95,6 +95,7 @@ def check_pair(factory_addr, path):
         factory = web3_instance.eth.contract(address=factory_addr, abi=GET_PAIR_ABI)
         for i in range(len(path) - 1):
             pair = factory.functions.getPair(path[i], path[i + 1]).call()
+            time.sleep(0.1)  # 🔹 замедление вызовов
             if pair.lower() == "0x0000000000000000000000000000000000000000":
                 return False
         return True
@@ -169,8 +170,7 @@ def update_valid_tokens():
         send_telegram("🔍 Началась проверка валидности токенов")
 
     for token in TOKENS:
-        if token == "USDC":
-            continue
+        if token == "USDC": continue
         for platform, info in ROUTERS.items():
             routes = build_all_routes(token)
             routes = [r for r in routes if len(r) <= 3]
