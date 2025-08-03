@@ -14,7 +14,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
 WEB3_WS = os.getenv("WEB3_WS")
 
-# Инициализация Web3 по WebSocket
+# Инициализация Web3
 web3_instance = Web3(WebsocketProvider(WEB3_WS))
 
 # Временная зона
@@ -83,7 +83,7 @@ def send_telegram(msg):
             data={"chat_id": TELEGRAM_CHAT_ID, "text": msg}
         )
     except Exception as e:
-        print(f"[telegram] error {e}")
+        print(f"[telegram] error: {e}")
 
 def check_pair(factory_addr, path):
     try:
@@ -116,16 +116,22 @@ def calculate_profit(router_addr, factory_addr, token_symbol, platform):
 
         for route in all_routes:
             path = [TOKENS[s] for s in route] + [base]
-            if not check_pair(factory_addr, path): continue
+            if not check_pair(factory_addr, path):
+                if DEBUG_MODE:
+                    send_telegram(f"❌ Invalid path: {route} + USDC")
+                continue
             try:
                 res = contract.functions.getAmountsOut(amount_in, path).call()
                 amt = res[-1]
-                if amt <= 0: continue
+                if amt <= 0:
+                    continue
                 profit = (amt / amount_in - 1) * 100
+                if DEBUG_MODE:
+                    send_telegram(f"🔁 Path: {route} → USDC\nProfit: {profit:.4f}%")
                 return profit
             except Exception as e:
                 if DEBUG_MODE:
-                    send_telegram(f"[ERROR] calculate_profit({token_symbol}): {str(e)}")
+                    send_telegram(f"[ERROR] route {route}: {str(e)}")
         return None
     except Exception as e:
         if DEBUG_MODE:
@@ -146,7 +152,7 @@ def update_valid_tokens():
     global valid_tokens
     updated = {}
     if DEBUG_MODE:
-        send_telegram("🔍 Режим проверки пар запущен")
+        send_telegram("🔍 Началась проверка валидности токенов")
 
     for token in TOKENS:
         if token == "USDC": continue
@@ -154,7 +160,7 @@ def update_valid_tokens():
             routes = build_all_routes(token)
             valid = sum(1 for route in routes if check_pair(info["factory"], [TOKENS[s] for s in route] + [TOKENS["USDC"]]))
             if DEBUG_MODE:
-                send_telegram(f"✔️ {token} on {platform}: {valid}/{len(routes)} маршрутов валидны")
+                send_telegram(f"✔️ {token} на {platform}: {valid}/{len(routes)} валидных маршрутов")
             if valid > 0:
                 updated.setdefault(platform, set()).add(token)
                 if platform not in valid_tokens or token not in valid_tokens[platform]:
@@ -166,7 +172,7 @@ def update_valid_tokens():
 
 def main():
     print("🚀 Bot started")
-    send_telegram("🤖 Bot запущен")
+    send_telegram("🤖 Бот запущен")
 
     min_profit = 0.1
     trade_dur = 4 * 60
@@ -182,7 +188,7 @@ def main():
             last_check = now
 
         if last_hb is None or (now - last_hb).total_seconds() >= 1800:
-            send_telegram(f"🟢 Bot активен: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+            send_telegram(f"🟢 Бот активен: {now.strftime('%Y-%m-%d %H:%M:%S')}")
             last_hb = now
 
         for platform, info in ROUTERS.items():
@@ -195,7 +201,7 @@ def main():
                 if key in tracked and (now - tracked[key]["start"]).total_seconds() < trade_dur + 60:
                     continue
                 url = build_url(platform, token)
-                send_telegram(f"📈 USDC→{token}→USDC\nPlatform: {platform}\nEst. profit: {profit:.2f}% 💸\n{url}")
+                send_telegram(f"📈 USDC→{token}→USDC\nПлатформа: {platform}\nПрофит: {profit:.2f}% 💸\n{url}")
                 tracked[key] = {
                     "start": now,
                     "profit": profit,
@@ -213,9 +219,9 @@ def main():
                     info["platform"]
                 )
                 if rp is not None:
-                    send_telegram(f"✅ Done {info['token']} on {info['platform']}\nPredicted: {info['profit']:.2f}%\nActual: {rp:.2f}%\n{info['url']}")
+                    send_telegram(f"✅ Завершена сделка {info['token']} на {info['platform']}\nДоходность: {info['profit']:.2f}% → {rp:.2f}%\n{info['url']}")
                 else:
-                    send_telegram(f"⚠️ Could not fetch actual for {info['token']} on {info['platform']}")
+                    send_telegram(f"⚠️ Не удалось пересчитать {info['token']} на {info['platform']}")
                 tracked.pop(key)
 
         time.sleep(10)
