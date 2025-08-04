@@ -32,18 +32,19 @@ TOKENS = {
     "GMT":  "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419",
 }
 
-# Основные платформы для фильтрации протоколов
 PLATFORMS = {
     "1inch": "1inch",
     "SushiSwap": "SushiSwap",
     "Uniswap": "UniswapV3",
 }
 
-# Ограничение запросов
 MAX_REQUESTS_PER_SECOND = 5
 REQUEST_INTERVAL = 1 / MAX_REQUESTS_PER_SECOND
 
 API_URL = "https://polygon.api.0x.org/swap/v1/quote"
+
+MIN_AMOUNT_USD = 100  # Минимум 100 USDT или USDC
+DECIMALS = 6
 
 def send_telegram(msg: str):
     try:
@@ -64,27 +65,30 @@ def query_0x_quote(sell_token: str, buy_token: str, sell_amount: int):
     params = {
         "sellToken": sell_token,
         "buyToken": buy_token,
-        "sellAmount": str(sell_amount),  # в минимальных единицах токена
+        "sellAmount": str(sell_amount),
     }
     try:
         resp = requests.get(API_URL, params=params, timeout=10)
         if resp.status_code == 200:
             return resp.json()
         else:
+            error_text = f"[0x API] Ошибка {resp.status_code}: {resp.text}"
             if DEBUG_MODE:
-                print(f"[0x API] Ошибка {resp.status_code}: {resp.text}")
+                print(error_text)
+            # Отправляем ошибку в Telegram
+            send_telegram(error_text)
             return None
     except Exception as e:
+        error_text = f"[0x API] Исключение запроса: {e}"
         if DEBUG_MODE:
-            print(f"[0x API] Исключение: {e}")
+            print(error_text)
+        send_telegram(error_text)
         return None
 
 def extract_platforms(protocols):
-    """Возвращает список платформ (1inch, sushi, uniswap) из поля protocols 0x API"""
     found = set()
     for segment in protocols:
         for route in segment:
-            # route формат: [ [DEX name, [pool info], direction] ... ]
             dex = route[0].lower()
             for platform_key, platform_name in PLATFORMS.items():
                 if platform_key.lower() in dex:
@@ -95,14 +99,12 @@ def main():
     print("🚀 Bot started")
     send_telegram("🤖 Бот запущен и готов отслеживать сделки")
 
-    # Берём только USDT и USDC для торговли с остальными токенами
     base_tokens = ["USDT", "USDC"]
-    tracked = {}  # Для дебаунса сообщений по сделкам: (sell, buy) -> время
+    tracked = {}
 
-    sell_amount_usdc = 10 ** 6   # 1 USDC (6 decimals)
-    sell_amount_usdt = 10 ** 6   # 1 USDT (6 decimals)
+    sell_amount_min = MIN_AMOUNT_USD * (10 ** DECIMALS)  # минимум 100 USDT/USDC в мин единицах
 
-    min_profit_percent = 0.5  # Минимальный профит для сообщения (примерно)
+    min_profit_percent = 0.5
 
     last_request_time = 0
 
@@ -112,7 +114,6 @@ def main():
         for base_token in base_tokens:
             base_addr = TOKENS[base_token]
 
-            # Проверяем обмен base_token на все остальные токены кроме самого base
             for token_symbol, token_addr in TOKENS.items():
                 if token_symbol == base_token:
                     continue
@@ -123,18 +124,17 @@ def main():
                     time.sleep(REQUEST_INTERVAL - elapsed)
                 last_request_time = time.time()
 
-                # Делаем запрос на котировку swap (продажа base_token -> покупка token_symbol)
-                sell_amount = sell_amount_usdc if base_token == "USDC" else sell_amount_usdt
+                # Используем минимум 100 USDT/USDC как sellAmount
+                sell_amount = sell_amount_min
+
                 quote = query_0x_quote(sell_token=base_addr, buy_token=token_addr, sell_amount=sell_amount)
                 if quote is None:
                     continue
 
-                # Цена покупки в минимальных единицах токена
                 buy_amount = int(quote.get("buyAmount", "0"))
                 if buy_amount == 0:
                     continue
 
-                # Рассчитаем прибыль в процентах
                 profit = (buy_amount / sell_amount - 1) * 100
 
                 if profit < min_profit_percent:
@@ -142,24 +142,20 @@ def main():
                         print(f"Низкий профит {profit:.4f}% для {base_token}->{token_symbol}")
                     continue
 
-                # Определяем платформы сделки из протоколов
                 protocols = quote.get("protocols", [])
                 platforms_found = extract_platforms(protocols)
-                # Фильтруем по нужным платформам
                 platforms_used = [p for p in platforms_found if p in PLATFORMS.values()]
                 if not platforms_used:
                     if DEBUG_MODE:
                         print(f"Платформа сделки не из списка для {base_token}->{token_symbol}: {platforms_found}")
                     continue
 
-                # Дебаунс по сделкам (чтобы не спамить повторно за 10 минут)
                 key = (base_token, token_symbol)
                 last_time = tracked.get(key, 0)
                 if (time.time() - last_time) < 600:
                     continue
                 tracked[key] = time.time()
 
-                # Формируем ссылку на 1inch как пример для пользователя
                 url = f"https://app.1inch.io/#/polygon/swap/{base_addr}/{token_addr}"
 
                 msg = (
@@ -175,7 +171,6 @@ def main():
                 if DEBUG_MODE:
                     print(msg)
 
-        # Через цикл 1 раз в минуту проверяем (можно увеличить интервал)
         time.sleep(60)
 
 if __name__ == "__main__":
