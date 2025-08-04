@@ -15,24 +15,51 @@ DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
 
 LONDON_TZ = pytz.timezone("Europe/London")
 
+# Токены с реальными адресами в Polygon
 TOKENS = {
     "USDT": "0xc2132D05D31C914a87C6611C10748AaCbA6cD43E",
     "USDC": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
     "DAI":  "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063",
     "FRAX": "0x45c32fA6DF82ead1e2EF74d17b76547EDdFaFF89",
+    "wstETH": "0x3a58f48e0b7f8b5bbe44c96fb95e9c1f9e246e13",
+    "BET": "0xBED2c2e1138a2d8db36137f7f0b3de09a6215bd6",
+    "WPOL": "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619",
+    "tBTC": "0x2f2a2543b76a4166549f7aaB2e75Bef0aefC5B0f",
+    "SAND": "0xBbba073C31bF03b8ACf7c28EF0738DeCF3695683",
+    "GMT": "0x7Dd9c5Cba05E151C895FDe1CF355C9A1D5DA6429",
+    "LINK": "0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39",
+    "EMT": "0x95A4492F028AA1fd432Ea71146b433E7B4446611",
+    "AAVE": "0xd6df932a45c0f255f85145f286ea0b292b21c90b",
+    "LDO": "0x2862a5c0322db0d4ae3f5c5bb4b6f92f5d9b9f01",
+}
+
+# Десятичные знаки для каждого токена
+DECIMALS = {
+    "USDT": 6,
+    "USDC": 6,
+    "DAI": 18,
+    "FRAX": 18,
+    "wstETH": 18,
+    "BET": 18,
+    "WPOL": 18,
+    "tBTC": 18,
+    "SAND": 18,
+    "GMT": 18,
+    "LINK": 18,
+    "EMT": 18,
+    "AAVE": 18,
+    "LDO": 18,
 }
 
 PLATFORMS = {
     "1inch": "1inch",
-    "SushiSwap": "SushiSwap",
+    "Sushi": "SushiSwap",
     "Uniswap": "UniswapV3",
 }
 
 MAX_REQUESTS_PER_SECOND = 5
 REQUEST_INTERVAL = 1 / MAX_REQUESTS_PER_SECOND
 API_URL = "https://polygon.api.0x.org/swap/v1/quote"
-MIN_AMOUNT_USD = 100
-DECIMALS = 6
 BAN_DURATION_SECONDS = 3600
 
 ban_list = {}
@@ -53,7 +80,11 @@ def get_local_time():
     return datetime.datetime.now(LONDON_TZ)
 
 def query_0x_quote(sell_token: str, buy_token: str, sell_amount: int):
-    params = {"sellToken": sell_token, "buyToken": buy_token, "sellAmount": str(sell_amount)}
+    params = {
+        "sellToken": sell_token,
+        "buyToken": buy_token,
+        "sellAmount": str(sell_amount)
+    }
     try:
         resp = requests.get(API_URL, params=params, timeout=10)
         if resp.status_code == 200:
@@ -91,7 +122,6 @@ def run_real_strategy():
 
     base_tokens = ["USDT", "USDC"]
     tracked = {}
-    sell_amount_min = MIN_AMOUNT_USD * (10 ** DECIMALS)
     min_profit_percent = 0.5
     last_request_time = 0
 
@@ -100,7 +130,13 @@ def run_real_strategy():
         clean_ban_list()
 
         for base_token in base_tokens:
-            base_addr = TOKENS[base_token]
+            base_addr = TOKENS.get(base_token)
+            if not base_addr:
+                continue
+
+            decimals = DECIMALS.get(base_token, 18)
+            sell_amount_min = 100 * (10 ** decimals)
+
             for token_symbol, token_addr in TOKENS.items():
                 if token_symbol == base_token or (base_token, token_symbol) in ban_list:
                     continue
@@ -170,8 +206,8 @@ def run_simulation_strategy():
             parts = pair_str.split("->")
             if len(parts) < 2:
                 continue
-            base_token = parts[0]
-            buy_token_symbol = parts[-1]
+            base_token = parts[0].strip()
+            buy_token_symbol = parts[-1].strip()
 
             sell_token = TOKENS.get(base_token)
             buy_token = TOKENS.get(buy_token_symbol)
@@ -184,7 +220,8 @@ def run_simulation_strategy():
                 continue
 
             sell_amount_usd = random.randint(50, 500)
-            sell_amount = sell_amount_usd * (10 ** DECIMALS)
+            decimals = DECIMALS.get(base_token, 18)
+            sell_amount = int(sell_amount_usd * (10 ** decimals))
 
             quote = query_0x_quote(sell_token, buy_token, sell_amount)
             if quote is None:
