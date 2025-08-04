@@ -5,7 +5,6 @@ import pytz
 import requests
 from dotenv import load_dotenv
 
-# Загрузка переменных окружения
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -13,7 +12,6 @@ DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
 
 LONDON_TZ = pytz.timezone("Europe/London")
 
-# Базовые токены (Polygon)
 TOKENS = {
     "USDT": "0xc2132D05D31C914a87C6611C10748AaCbA6cD43E",
     "USDC": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
@@ -43,8 +41,12 @@ REQUEST_INTERVAL = 1 / MAX_REQUESTS_PER_SECOND
 
 API_URL = "https://polygon.api.0x.org/swap/v1/quote"
 
-MIN_AMOUNT_USD = 100  # Минимум 100 USDT или USDC
+MIN_AMOUNT_USD = 100
 DECIMALS = 6
+
+BAN_DURATION_SECONDS = 3600  # 1 час
+
+ban_list = {}  # {(sell_token, buy_token): timestamp_banned}
 
 def send_telegram(msg: str):
     try:
@@ -75,7 +77,6 @@ def query_0x_quote(sell_token: str, buy_token: str, sell_amount: int):
             error_text = f"[0x API] Ошибка {resp.status_code}: {resp.text}"
             if DEBUG_MODE:
                 print(error_text)
-            # Отправляем ошибку в Telegram
             send_telegram(error_text)
             return None
     except Exception as e:
@@ -95,6 +96,40 @@ def extract_platforms(protocols):
                     found.add(platform_name)
     return list(found)
 
+def check_route_availability(sell_token, buy_token, sell_amount):
+    try:
+        resp = requests.get(API_URL, params={
+            "sellToken": sell_token,
+            "buyToken": buy_token,
+            "sellAmount": str(sell_amount),
+        }, timeout=10)
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"[check_route_availability] Исключение: {e}")
+        return True  # не блокируем из-за ошибки запроса
+
+    if resp.status_code == 200:
+        return True
+    elif resp.status_code == 404:
+        try:
+            data = resp.json()
+            if "message" in data and "no Route matched" in data["message"]:
+                return False
+        except:
+            pass
+    return True
+
+def clean_ban_list():
+    now_ts = time.time()
+    to_remove = []
+    for pair, ts in ban_list.items():
+        if now_ts - ts > BAN_DURATION_SECONDS:
+            to_remove.append(pair)
+    for pair in to_remove:
+        del ban_list[pair]
+        if DEBUG_MODE:
+            send_telegram(f"🟢 Пара {pair[0]}->{pair[1]} снята с бан-листа (таймаут истек)")
+
 def main():
     print("🚀 Bot started")
     send_telegram("🤖 Бот запущен и готов отслеживать сделки")
@@ -102,14 +137,13 @@ def main():
     base_tokens = ["USDT", "USDC"]
     tracked = {}
 
-    sell_amount_min = MIN_AMOUNT_USD * (10 ** DECIMALS)  # минимум 100 USDT/USDC в мин единицах
-
+    sell_amount_min = MIN_AMOUNT_USD * (10 ** DECIMALS)
     min_profit_percent = 0.5
-
     last_request_time = 0
 
     while True:
         now = get_local_time()
+        clean_ban_list()
 
         for base_token in base_tokens:
             base_addr = TOKENS[base_token]
@@ -118,14 +152,25 @@ def main():
                 if token_symbol == base_token:
                     continue
 
-                # Лимитируем частоту запросов
+                if (base_token, token_symbol) in ban_list:
+                    if DEBUG_MODE:
+                        print(f"Пара {base_token}->{token_symbol} в бан-листе — пропускаем")
+                    continue
+
                 elapsed = time.time() - last_request_time
                 if elapsed < REQUEST_INTERVAL:
                     time.sleep(REQUEST_INTERVAL - elapsed)
                 last_request_time = time.time()
 
-                # Используем минимум 100 USDT/USDC как sellAmount
                 sell_amount = sell_amount_min
+
+                if not check_route_availability(base_addr, token_addr, sell_amount):
+                    ban_list[(base_token, token_symbol)] = time.time()
+                    msg = f"🚫 Пара {base_token}→{token_symbol} добавлена в бан-лист (маршрут недоступен)"
+                    send_telegram(msg)
+                    if DEBUG_MODE:
+                        print(msg)
+                    continue
 
                 quote = query_0x_quote(sell_token=base_addr, buy_token=token_addr, sell_amount=sell_amount)
                 if quote is None:
@@ -136,7 +181,6 @@ def main():
                     continue
 
                 profit = (buy_amount / sell_amount - 1) * 100
-
                 if profit < min_profit_percent:
                     if DEBUG_MODE:
                         print(f"Низкий профит {profit:.4f}% для {base_token}->{token_symbol}")
