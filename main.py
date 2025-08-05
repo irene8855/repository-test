@@ -73,6 +73,9 @@ BAN_DURATION_SECONDS = 900  # 15 минут
 ban_list = {}
 tracked_trades = {}
 
+# --- Волатильные токены для RSI ---
+VOLATILE_TOKENS = ["AAVE", "LINK", "EMT", "LDO", "SUSHI", "GMT", "SAND", "WETH"]
+
 # --- Функции ---
 
 def send_telegram(msg: str):
@@ -201,22 +204,31 @@ def run_real_strategy():
 
                 ds_data = fetch_dexscreener_data(token_addr)
                 if not ds_data:
-                    ban_list[(base_token, token_symbol)] = time.time()
-                    continue
+                    # Dexscreener не ответил
+                    if token_symbol in VOLATILE_TOKENS:
+                        # Пропускаем волатильные без данных
+                        ban_list[(base_token, token_symbol)] = time.time()
+                        continue
+                    else:
+                        # Для стабильных токенов разрешаем торговать дальше
+                        prices = []
+                else:
+                    try:
+                        candles = ds_data.get("pairs", [])[0].get("candles", [])
+                        prices = [float(c["close"]) for c in candles if "close" in c]
+                    except Exception:
+                        prices = []
 
-                try:
-                    candles = ds_data.get("pairs", [])[0].get("candles", [])
-                    prices = [float(c["close"]) for c in candles if "close" in c]
-                except Exception:
-                    prices = []
-
-                rsi = calculate_rsi(prices)
-                if rsi is None:
-                    continue
-
-                # Вход при RSI < 30
-                if rsi >= 30:
-                    continue
+                if token_symbol in VOLATILE_TOKENS:
+                    if not prices:
+                        # Нет свечей — пропускаем
+                        continue
+                    rsi = calculate_rsi(prices)
+                    if rsi is None or rsi >= 30:
+                        continue
+                else:
+                    # Для стабильных токенов RSI не считается
+                    rsi = None
 
                 quote_entry = query_0x_quote(base_addr, token_addr, sell_amount)
                 if not quote_entry or "buyAmount" not in quote_entry:
@@ -236,7 +248,7 @@ def run_real_strategy():
                 if not platforms_used:
                     continue
 
-                timing_min = 3 + int((30 - rsi) / 10)  # 3-8 минут
+                timing_min = 3 + int((30 - (rsi if rsi is not None else 0)) / 10)  # 3-8 минут
                 timing_sec = timing_min * 60
 
                 time_start = now.strftime("%H:%M")
