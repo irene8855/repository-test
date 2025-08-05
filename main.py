@@ -75,6 +75,10 @@ BAN_DURATION_SECONDS = 900  # 15 минут
 ban_list = {}
 tracked_trades = {}
 
+last_404_telegram_time = 0
+MIN_404_INTERVAL = 30  # секунд
+
+
 def send_telegram(msg: str):
     try:
         resp = requests.post(
@@ -87,10 +91,14 @@ def send_telegram(msg: str):
         if DEBUG_MODE:
             print(f"[Telegram] Exception: {e}")
 
+
 def get_local_time():
     return datetime.datetime.now(LONDON_TZ)
 
+
 def query_0x_quote(sell_token: str, buy_token: str, sell_amount: int, symbol_pair=""):
+    global last_404_telegram_time
+
     params = {
         "sellToken": sell_token,
         "buyToken": buy_token,
@@ -103,18 +111,23 @@ def query_0x_quote(sell_token: str, buy_token: str, sell_amount: int, symbol_pai
         elif resp.status_code == 404:
             key = (symbol_pair.split("->")[0], symbol_pair.split("->")[1])
             ban_list[key] = time.time()
+            now = time.time()
             if DEBUG_MODE:
                 print(f"[0x API] 404 для {symbol_pair}, пара в бан-лист на 15 минут.")
+
+            if now - last_404_telegram_time > MIN_404_INTERVAL:
+                send_telegram(f"[0x API] 404 для {symbol_pair}, пара в бан-лист на 15 минут.")
+                last_404_telegram_time = now
+
             return None
         else:
             msg = f"[0x API] Error {resp.status_code} for {symbol_pair}: {resp.text}"
-            if DEBUG_MODE:
-                send_telegram(msg)
+            send_telegram(msg)
             return None
     except Exception as e:
-        if DEBUG_MODE:
-            send_telegram(f"[0x API] Exception for {symbol_pair}: {e}")
+        send_telegram(f"[0x API] Exception for {symbol_pair}: {e}")
         return None
+
 
 def extract_platforms(protocols):
     found = set()
@@ -126,12 +139,14 @@ def extract_platforms(protocols):
                     found.add(platform_name)
     return list(found)
 
+
 def clean_ban_list():
     now_ts = time.time()
     to_remove = [pair for pair, ts in ban_list.items() if now_ts - ts > BAN_DURATION_SECONDS]
     for pair in to_remove:
         del ban_list[pair]
         send_telegram(f"🔓 Пара {pair[0]} → {pair[1]} вышла из бан-листа.")
+
 
 def fetch_dexscreener_data(token_addr):
     try:
@@ -141,6 +156,7 @@ def fetch_dexscreener_data(token_addr):
         return None
     except:
         return None
+
 
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1:
@@ -162,6 +178,7 @@ def calculate_rsi(prices, period=14):
     rs = average_gain / average_loss
     rsi = 100 - (100 / (1 + rs))
     return rsi
+
 
 def run_real_strategy():
     send_telegram("🤖 Trading bot started with real strategy.")
@@ -271,6 +288,7 @@ def run_real_strategy():
 
                 ban_list[key] = time.time()
 
+
 if __name__ == "__main__":
     try:
         run_real_strategy()
@@ -279,3 +297,4 @@ if __name__ == "__main__":
         send_telegram(err_msg)
         if DEBUG_MODE:
             print(err_msg)
+            
