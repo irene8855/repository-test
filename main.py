@@ -167,7 +167,7 @@ def run_real_strategy():
     send_telegram("🤖 Trading bot started with real strategy.")
     print("🤖 Real strategy started")
 
-    base_tokens = ["USDT", "USDC"]
+    base_tokens = ["USDT"]
     min_profit_percent = 1.0
     last_request_time = 0
 
