@@ -57,6 +57,9 @@ DECIMALS = {
     "SUSHI": 18
 }
 
+# Волатильные токены для анализа RSI
+RSI_TOKENS = {"AAVE", "LINK", "EMT", "LDO", "SUSHI", "GMT", "SAND", "tBTC", "wstETH", "WETH"}
+
 PLATFORMS = {
     "1inch": "1inch",
     "Sushi": "SushiSwap",
@@ -72,9 +75,6 @@ BAN_DURATION_SECONDS = 900  # 15 минут
 
 ban_list = {}
 tracked_trades = {}
-
-# --- Волатильные токены для RSI ---
-VOLATILE_TOKENS = ["AAVE", "LINK", "EMT", "LDO", "SUSHI", "GMT", "SAND", "WETH"]
 
 # --- Функции ---
 
@@ -93,7 +93,7 @@ def send_telegram(msg: str):
 def get_local_time():
     return datetime.datetime.now(LONDON_TZ)
 
-def query_0x_quote(sell_token: str, buy_token: str, sell_amount: int):
+def query_0x_quote(sell_token: str, buy_token: str, sell_amount: int, symbol_pair=""):
     params = {
         "sellToken": sell_token,
         "buyToken": buy_token,
@@ -104,12 +104,13 @@ def query_0x_quote(sell_token: str, buy_token: str, sell_amount: int):
         if resp.status_code == 200:
             return resp.json()
         else:
+            msg = f"[0x API] Error {resp.status_code} for {symbol_pair}: {resp.text}"
             if DEBUG_MODE:
-                send_telegram(f"[0x API] Error {resp.status_code}: {resp.text}")
+                send_telegram(msg)
             return None
     except Exception as e:
         if DEBUG_MODE:
-            send_telegram(f"[0x API] Exception: {e}")
+            send_telegram(f"[0x API] Exception for {symbol_pair}: {e}")
         return None
 
 def extract_platforms(protocols):
@@ -127,21 +128,14 @@ def clean_ban_list():
     to_remove = [pair for pair, ts in ban_list.items() if now_ts - ts > BAN_DURATION_SECONDS]
     for pair in to_remove:
         del ban_list[pair]
-        if DEBUG_MODE:
-            send_telegram(f"🛡️ Pair {pair[0]}->{pair[1]} removed from ban list")
 
 def fetch_dexscreener_data(token_addr):
     try:
         resp = requests.get(f"{DEXSCREENER_API}{token_addr}")
         if resp.status_code == 200:
             return resp.json()
-        else:
-            if DEBUG_MODE:
-                send_telegram(f"[Dexscreener] Error {resp.status_code}: {resp.text}")
-            return None
-    except Exception as e:
-        if DEBUG_MODE:
-            send_telegram(f"[Dexscreener] Exception: {e}")
+        return None
+    except:
         return None
 
 def calculate_rsi(prices, period=14):
@@ -185,7 +179,7 @@ def run_real_strategy():
                 continue
 
             decimals = DECIMALS.get(base_token, 18)
-            trade_amount_usd = 100 + int((time.time() * 1000) % 401)  # 100-500 USDT approx
+            trade_amount_usd = 100 + int((time.time() * 1000) % 401)
             sell_amount = int(trade_amount_usd * (10 ** decimals))
 
             for token_symbol, token_addr in TOKENS.items():
@@ -193,8 +187,7 @@ def run_real_strategy():
                     continue
 
                 key = (base_token, token_symbol)
-                last_trade_time = tracked_trades.get(key, 0)
-                if time.time() - last_trade_time < BAN_DURATION_SECONDS:
+                if time.time() - tracked_trades.get(key, 0) < BAN_DURATION_SECONDS:
                     continue
 
                 elapsed = time.time() - last_request_time
@@ -202,37 +195,27 @@ def run_real_strategy():
                     time.sleep(REQUEST_INTERVAL - elapsed)
                 last_request_time = time.time()
 
-                ds_data = fetch_dexscreener_data(token_addr)
-                if not ds_data:
-                    # Dexscreener не ответил
-                    if token_symbol in VOLATILE_TOKENS:
-                        # Пропускаем волатильные без данных
-                        ban_list[(base_token, token_symbol)] = time.time()
-                        continue
-                    else:
-                        # Для стабильных токенов разрешаем торговать дальше
-                        prices = []
-                else:
+                use_rsi = token_symbol in RSI_TOKENS
+                prices = []
+
+                if use_rsi:
+                    ds_data = fetch_dexscreener_data(token_addr)
+                    if not ds_data:
+                        continue  # пропуск если свечей нет и RSI нужен
                     try:
                         candles = ds_data.get("pairs", [])[0].get("candles", [])
                         prices = [float(c["close"]) for c in candles if "close" in c]
-                    except Exception:
-                        prices = []
-
-                if token_symbol in VOLATILE_TOKENS:
-                    if not prices:
-                        # Нет свечей — пропускаем
+                    except:
                         continue
+
                     rsi = calculate_rsi(prices)
                     if rsi is None or rsi >= 30:
                         continue
                 else:
-                    # Для стабильных токенов RSI не считается
                     rsi = None
 
-                quote_entry = query_0x_quote(base_addr, token_addr, sell_amount)
+                quote_entry = query_0x_quote(base_addr, token_addr, sell_amount, f"{base_token}->{token_symbol}")
                 if not quote_entry or "buyAmount" not in quote_entry:
-                    ban_list[(base_token, token_symbol)] = time.time()
                     continue
 
                 buy_amount_token = int(quote_entry["buyAmount"])
@@ -243,17 +226,15 @@ def run_real_strategy():
                 if profit_estimate < min_profit_percent:
                     continue
 
-                protocols = quote_entry.get("protocols", [])
-                platforms_used = extract_platforms(protocols)
+                platforms_used = extract_platforms(quote_entry.get("protocols", []))
                 if not platforms_used:
                     continue
 
-                timing_min = 3 + int((30 - (rsi if rsi is not None else 0)) / 10)  # 3-8 минут
+                timing_min = 3 + int(((30 - (rsi or 25)) / 10))
                 timing_sec = timing_min * 60
 
                 time_start = now.strftime("%H:%M")
                 time_sell = (now + datetime.timedelta(seconds=timing_sec)).strftime("%H:%M")
-
                 url = f"https://1inch.io/#/polygon/swap/{base_addr}/{token_addr}"
 
                 msg_entry = (
@@ -270,14 +251,12 @@ def run_real_strategy():
 
                 tracked_trades[key] = time.time()
 
-                # Ждём время сделки
                 time.sleep(timing_sec)
 
-                quote_exit = query_0x_quote(token_addr, base_addr, buy_amount_token)
+                quote_exit = query_0x_quote(token_addr, base_addr, buy_amount_token, f"{token_symbol}->{base_token}")
                 if quote_exit and "buyAmount" in quote_exit:
                     final_amount_exit = int(quote_exit["buyAmount"])
                     actual_profit = (final_amount_exit / sell_amount - 1) * 100
-
                     msg_exit = (
                         f"✅ TRADE COMPLETED\n"
                         f"Actual PROFIT: {actual_profit:.2f}%\n"
@@ -288,7 +267,7 @@ def run_real_strategy():
                     send_telegram(msg_exit)
                     print(f"[REAL] Trade completed: {msg_exit}")
 
-                ban_list[(base_token, token_symbol)] = time.time()
+                ban_list[key] = time.time()
 
 if __name__ == "__main__":
     try:
