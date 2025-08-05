@@ -4,18 +4,19 @@ import time
 import datetime
 import pytz
 import requests
-import random
-import csv
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# --- Настройки ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
 
 LONDON_TZ = pytz.timezone("Europe/London")
 
+# Токены и адреса
 TOKENS = {
     "USDT": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
     "USDC": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
@@ -62,12 +63,17 @@ PLATFORMS = {
     "Uniswap": "UniswapV3",
 }
 
+API_0X_URL = "https://polygon.api.0x.org/swap/v1/quote"
+DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/"
+
 MAX_REQUESTS_PER_SECOND = 5
 REQUEST_INTERVAL = 1 / MAX_REQUESTS_PER_SECOND
-API_URL = "https://polygon.api.0x.org/swap/v1/quote"
-BAN_DURATION_SECONDS = 3600
+BAN_DURATION_SECONDS = 900  # 15 минут
 
 ban_list = {}
+tracked_trades = {}
+
+# --- Функции ---
 
 def send_telegram(msg: str):
     try:
@@ -76,10 +82,10 @@ def send_telegram(msg: str):
             data={"chat_id": TELEGRAM_CHAT_ID, "text": msg}
         )
         if resp.status_code != 200 and DEBUG_MODE:
-            print(f"[Telegram] ÐÑÐ¸Ð±ÐºÐ°: {resp.text}")
+            print(f"[Telegram] Error: {resp.text}")
     except Exception as e:
         if DEBUG_MODE:
-            print(f"[Telegram] ÐÑÐºÐ»ÑÑÐµÐ½Ð¸Ðµ: {e}")
+            print(f"[Telegram] Exception: {e}")
 
 def get_local_time():
     return datetime.datetime.now(LONDON_TZ)
@@ -91,16 +97,16 @@ def query_0x_quote(sell_token: str, buy_token: str, sell_amount: int):
         "sellAmount": str(sell_amount)
     }
     try:
-        resp = requests.get(API_URL, params=params, timeout=10)
+        resp = requests.get(API_0X_URL, params=params, timeout=10)
         if resp.status_code == 200:
             return resp.json()
         else:
             if DEBUG_MODE:
-                print(f"[0x API] ÐÑÐ¸Ð±ÐºÐ° {resp.status_code}: {resp.text}")
+                send_telegram(f"[0x API] Error {resp.status_code}: {resp.text}")
             return None
     except Exception as e:
         if DEBUG_MODE:
-            print(f"[0x API] ÐÑÐºÐ»ÑÑÐµÐ½Ð¸Ðµ: {e}")
+            send_telegram(f"[0x API] Exception: {e}")
         return None
 
 def extract_platforms(protocols):
@@ -119,15 +125,51 @@ def clean_ban_list():
     for pair in to_remove:
         del ban_list[pair]
         if DEBUG_MODE:
-            send_telegram(f"ð¢ ÐÐ°ÑÐ° {pair[0]}->{pair[1]} ÑÐ½ÑÑÐ° Ñ Ð±Ð°Ð½-Ð»Ð¸ÑÑÐ°")
+            send_telegram(f"🛡️ Pair {pair[0]}->{pair[1]} removed from ban list")
+
+def fetch_dexscreener_data(token_addr):
+    try:
+        resp = requests.get(f"{DEXSCREENER_API}{token_addr}")
+        if resp.status_code == 200:
+            return resp.json()
+        else:
+            if DEBUG_MODE:
+                send_telegram(f"[Dexscreener] Error {resp.status_code}: {resp.text}")
+            return None
+    except Exception as e:
+        if DEBUG_MODE:
+            send_telegram(f"[Dexscreener] Exception: {e}")
+        return None
+
+def calculate_rsi(prices, period=14):
+    if len(prices) < period + 1:
+        return None
+    gains = []
+    losses = []
+    for i in range(-period, 0):
+        delta = prices[i] - prices[i - 1]
+        if delta > 0:
+            gains.append(delta)
+            losses.append(0)
+        else:
+            gains.append(0)
+            losses.append(abs(delta))
+    average_gain = sum(gains) / period
+    average_loss = sum(losses) / period
+    if average_loss == 0:
+        return 100
+    rs = average_gain / average_loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+# --- Главная стратегия ---
 
 def run_real_strategy():
-    print("ð Real strategy started")
-    send_telegram("ð¤ ÐÐ¾Ñ ÑÐµÐ°Ð»ÑÐ½Ð¾Ð¹ ÑÐ¾ÑÐ³Ð¾Ð²Ð»Ð¸ Ð·Ð°Ð¿ÑÑÐµÐ½")
+    send_telegram("🤖 Trading bot started with real strategy.")
+    print("🤖 Real strategy started")
 
     base_tokens = ["USDT", "USDC"]
-    tracked = {}
-    min_profit_percent = 0.5
+    min_profit_percent = 1.0
     last_request_time = 0
 
     while True:
@@ -140,10 +182,16 @@ def run_real_strategy():
                 continue
 
             decimals = DECIMALS.get(base_token, 18)
-            sell_amount_min = 100 * (10 ** decimals)
+            trade_amount_usd = 100 + int((time.time() * 1000) % 401)  # 100-500 USDT approx
+            sell_amount = int(trade_amount_usd * (10 ** decimals))
 
             for token_symbol, token_addr in TOKENS.items():
                 if token_symbol == base_token or (base_token, token_symbol) in ban_list:
+                    continue
+
+                key = (base_token, token_symbol)
+                last_trade_time = tracked_trades.get(key, 0)
+                if time.time() - last_trade_time < BAN_DURATION_SECONDS:
                     continue
 
                 elapsed = time.time() - last_request_time
@@ -151,134 +199,91 @@ def run_real_strategy():
                     time.sleep(REQUEST_INTERVAL - elapsed)
                 last_request_time = time.time()
 
-                quote = query_0x_quote(base_addr, token_addr, sell_amount_min)
-                if quote is None:
+                ds_data = fetch_dexscreener_data(token_addr)
+                if not ds_data:
                     ban_list[(base_token, token_symbol)] = time.time()
                     continue
 
-                buy_amount = int(quote.get("buyAmount", "0"))
-                if buy_amount == 0:
+                try:
+                    candles = ds_data.get("pairs", [])[0].get("candles", [])
+                    prices = [float(c["close"]) for c in candles if "close" in c]
+                except Exception:
+                    prices = []
+
+                rsi = calculate_rsi(prices)
+                if rsi is None:
                     continue
 
-                profit = (buy_amount / sell_amount_min - 1) * 100
-                if profit < min_profit_percent:
+                # Вход при RSI < 30
+                if rsi >= 30:
                     continue
 
-                protocols = quote.get("protocols", [])
-                platforms_found = extract_platforms(protocols)
-                platforms_used = [p for p in platforms_found if p in PLATFORMS.values()]
+                quote_entry = query_0x_quote(base_addr, token_addr, sell_amount)
+                if not quote_entry or "buyAmount" not in quote_entry:
+                    ban_list[(base_token, token_symbol)] = time.time()
+                    continue
+
+                buy_amount_token = int(quote_entry["buyAmount"])
+                if buy_amount_token == 0:
+                    continue
+
+                profit_estimate = ((buy_amount_token / sell_amount) - 1) * 100
+                if profit_estimate < min_profit_percent:
+                    continue
+
+                protocols = quote_entry.get("protocols", [])
+                platforms_used = extract_platforms(protocols)
                 if not platforms_used:
                     continue
 
-                key = (base_token, token_symbol)
-                last_time = tracked.get(key, 0)
-                if time.time() - last_time < 600:
-                    continue
-                tracked[key] = time.time()
+                timing_min = 3 + int((30 - rsi) / 10)  # 3-8 минут
+                timing_sec = timing_min * 60
 
-                url = f"https://app.1inch.io/#/polygon/swap/{base_addr}/{token_addr}"
+                time_start = now.strftime("%H:%M")
+                time_sell = (now + datetime.timedelta(seconds=timing_sec)).strftime("%H:%M")
 
-                msg = (f"ð [REAL] Ð¡Ð´ÐµÐ»ÐºÐ°:
-{base_token} â {token_symbol}
-"
-                       f"ÐÑÐ¾ÑÐ¸Ñ: {profit:.2f}%
-"
-                       f"ÐÐ»Ð°ÑÑÐ¾ÑÐ¼Ñ: {', '.join(platforms_used)}
-"
-                       f"Ð¡ÑÑÐ»ÐºÐ°: {url}
-"
-                       f"ÐÑÐµÐ¼Ñ: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+                url = f"https://1inch.io/#/polygon/swap/{base_addr}/{token_addr}"
 
-                send_telegram(msg)
-                if DEBUG_MODE:
-                    print(msg)
-        time.sleep(60)
+                msg_entry = (
+                    f"{base_token} -> {token_symbol} -> {base_token} 📈\n"
+                    f"TIMING: {timing_min} MIN ⌛️\n"
+                    f"TIME FOR START: {time_start}\n"
+                    f"TIME FOR SELL: {time_sell}\n"
+                    f"PROFIT: {profit_estimate:.2f}% 💸\n"
+                    f"PLATFORMS: {', '.join(platforms_used)} 📊\n"
+                    f"{url}"
+                )
+                send_telegram(msg_entry)
+                print(f"[REAL] Trade predicted: {msg_entry}")
 
-def run_simulation_strategy():
-    print("ð Simulation strategy started")
-    send_telegram("ð¤ ÐÐ¾Ñ ÑÐ¸Ð¼ÑÐ»ÑÑÐ¸Ð¸ Ð·Ð°Ð¿ÑÑÐµÐ½")
+                tracked_trades[key] = time.time()
 
-    tracked_sim = {}
-    file_path = "friend_trades.csv"
+                # Ждём время сделки
+                time.sleep(timing_sec)
 
-    try:
-        with open(file_path, newline='', encoding='utf-8') as csvfile:
-            reader = csv.DictReader(csvfile)
-            trades = list(reader)
-    except Exception as e:
-        send_telegram(f"[Sim] ÐÑÐ¸Ð±ÐºÐ° Ð·Ð°Ð³ÑÑÐ·ÐºÐ¸ {file_path}: {e}")
-        return
+                quote_exit = query_0x_quote(token_addr, base_addr, buy_amount_token)
+                if quote_exit and "buyAmount" in quote_exit:
+                    final_amount_exit = int(quote_exit["buyAmount"])
+                    actual_profit = (final_amount_exit / sell_amount - 1) * 100
 
-    while True:
-        now = get_local_time()
-        for trade in trades:
-            pair_str = trade['pair']
-            parts = pair_str.split("->")
-            if len(parts) < 2:
-                continue
-            base_token = parts[0].strip()
-            buy_token_symbol = parts[-1].strip()
+                    msg_exit = (
+                        f"✅ TRADE COMPLETED\n"
+                        f"Actual PROFIT: {actual_profit:.2f}%\n"
+                        f"Time: {get_local_time().strftime('%H:%M')}\n"
+                        f"Token: {token_symbol}\n"
+                        f"https://dexscreener.com/polygon"
+                    )
+                    send_telegram(msg_exit)
+                    print(f"[REAL] Trade completed: {msg_exit}")
 
-            sell_token = TOKENS.get(base_token)
-            buy_token = TOKENS.get(buy_token_symbol)
-            if not sell_token or not buy_token:
-                continue
-
-            key = (base_token, buy_token_symbol)
-            last_time = tracked_sim.get(key, 0)
-            if time.time() - last_time < 600:
-                continue
-
-            sell_amount_usd = random.randint(50, 500)
-            decimals = DECIMALS.get(base_token, 18)
-            sell_amount = int(sell_amount_usd * (10 ** decimals))
-
-            quote = query_0x_quote(sell_token, buy_token, sell_amount)
-            if quote is None:
-                continue
-
-            buy_amount = int(quote.get("buyAmount", "0"))
-            if buy_amount == 0:
-                continue
-
-            profit = (buy_amount / sell_amount - 1) * 100
-
-            protocols = quote.get("protocols", [])
-            platforms_found = extract_platforms(protocols)
-            platforms_used = [p for p in platforms_found if p in PLATFORMS.values()]
-            if not platforms_used:
-                continue
-
-            tracked_sim[key] = time.time()
-
-            url = f"https://app.1inch.io/#/polygon/swap/{sell_token}/{buy_token}"
-
-            msg = (f"ð [SIM] Ð¡Ð´ÐµÐ»ÐºÐ° Ð´ÑÑÐ³Ð°:
-{base_token} â {buy_token_symbol}
-"
-                   f"ÐÑÐ¾ÑÐ¸Ñ: {profit:.2f}%
-"
-                   f"ÐÐ»Ð°ÑÑÐ¾ÑÐ¼Ñ: {', '.join(platforms_used)}
-"
-                   f"Ð¡ÑÐ¼Ð¼Ð°: ${sell_amount_usd}
-"
-                   f"Ð¡ÑÑÐ»ÐºÐ°: {url}
-"
-                   f"ÐÑÐµÐ¼Ñ: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-
-            send_telegram(msg)
-            if DEBUG_MODE:
-                print(msg)
-            time.sleep(5)
-
-def main():
-    import threading
-    t1 = threading.Thread(target=run_real_strategy)
-    t2 = threading.Thread(target=run_simulation_strategy)
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
+                ban_list[(base_token, token_symbol)] = time.time()
 
 if __name__ == "__main__":
-    main()
+    try:
+        run_real_strategy()
+    except Exception as e:
+        err_msg = f"❗ Bot crashed with exception: {e}"
+        send_telegram(err_msg)
+        if DEBUG_MODE:
+            print(err_msg)
+            
