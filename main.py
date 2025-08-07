@@ -12,7 +12,7 @@ load_dotenv()
 # --- Настройки ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-DEBUG_MODE = True  # Установлен True для отладки
+DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
 
 LONDON_TZ = pytz.timezone("Europe/London")
 
@@ -37,27 +37,9 @@ TOKENS = {
     "SUSHI": "0x0b3F868E0BE5597D5DB7fEB59E1CADBb0fdDa50a"
 }
 
-DECIMALS = {
-    "USDT": 6,
-    "USDC": 6,
-    "DAI": 18,
-    "FRAX": 18,
-    "wstETH": 18,
-    "BET": 18,
-    "WPOL": 18,
-    "tBTC": 18,
-    "SAND": 18,
-    "GMT": 8,
-    "LINK": 18,
-    "EMT": 18,
-    "AAVE": 18,
-    "LDO": 18,
-    "POL": 18,
-    "WETH": 18,
-    "SUSHI": 18
-}
-
-RSI_TOKENS = {"AAVE", "LINK", "EMT", "LDO", "SUSHI", "GMT", "SAND", "tBTC", "wstETH", "WETH"}
+DECIMALS = {symbol: 18 for symbol in TOKENS}
+DECIMALS["USDT"] = DECIMALS["USDC"] = 6
+DECIMALS["GMT"] = 8
 
 PLATFORMS = {
     "1inch": "1inch",
@@ -74,7 +56,6 @@ BAN_DURATION_SECONDS = 900  # 15 минут
 
 ban_list = {}
 tracked_trades = {}
-
 last_404_telegram_time = 0
 MIN_404_INTERVAL = 30  # секунд
 
@@ -107,18 +88,18 @@ def query_0x_quote(sell_token: str, buy_token: str, sell_amount: int, symbol_pai
     try:
         resp = requests.get(API_0X_URL, params=params, timeout=10)
         if resp.status_code == 200:
+            if DEBUG_MODE:
+                print(f"[0x API] Success for {symbol_pair}")
             return resp.json()
         elif resp.status_code == 404:
             key = (symbol_pair.split("->")[0], symbol_pair.split("->")[1])
             ban_list[key] = time.time()
             now = time.time()
-            if DEBUG_MODE:
-                print(f"[0x API] 404 для {symbol_pair}, пара в бан-лист.")
-
             if now - last_404_telegram_time > MIN_404_INTERVAL:
-                send_telegram(f"[0x API] 404 для {symbol_pair}, пара в бан-лист.")
+                send_telegram(f"[0x API] 404 для {symbol_pair}, пара в бан-лист на 15 минут.")
                 last_404_telegram_time = now
-
+            if DEBUG_MODE:
+                print(f"[0x API] 404 для {symbol_pair}, добавлена в бан-лист.")
             return None
         else:
             msg = f"[0x API] Error {resp.status_code} for {symbol_pair}: {resp.text}"
@@ -146,37 +127,8 @@ def clean_ban_list():
     for pair in to_remove:
         del ban_list[pair]
         send_telegram(f"🔓 Пара {pair[0]} → {pair[1]} вышла из бан-листа.")
-
-
-def fetch_dexscreener_data(token_addr):
-    try:
-        resp = requests.get(f"{DEXSCREENER_API}{token_addr}")
-        if resp.status_code == 200:
-            return resp.json()
-        return None
-    except:
-        return None
-
-
-def calculate_rsi(prices, period=14):
-    if len(prices) < period + 1:
-        return None
-    gains = []
-    losses = []
-    for i in range(-period, 0):
-        delta = prices[i] - prices[i - 1]
-        if delta > 0:
-            gains.append(delta)
-            losses.append(0)
-        else:
-            gains.append(0)
-            losses.append(abs(delta))
-    average_gain = sum(gains) / period
-    average_loss = sum(losses) / period
-    if average_loss == 0:
-        return 100
-    rs = average_gain / average_loss
-    return 100 - (100 / (1 + rs))
+        if DEBUG_MODE:
+            print(f"[BAN] {pair} removed from ban list")
 
 
 def run_real_strategy():
@@ -206,8 +158,6 @@ def run_real_strategy():
 
                 key = (base_token, token_symbol)
                 if time.time() - tracked_trades.get(key, 0) < BAN_DURATION_SECONDS:
-                    if DEBUG_MODE:
-                        print(f"[DEBUG] Skipped {base_token}->{token_symbol}, в cooldown")
                     continue
 
                 elapsed = time.time() - last_request_time
@@ -215,50 +165,31 @@ def run_real_strategy():
                     time.sleep(REQUEST_INTERVAL - elapsed)
                 last_request_time = time.time()
 
-                use_rsi = token_symbol in RSI_TOKENS
-                prices = []
-
-                if use_rsi:
-                    ds_data = fetch_dexscreener_data(token_addr)
-                    if not ds_data:
-                        continue
-                    pairs = ds_data.get("pairs", [])
-                    if not pairs or "candles" not in pairs[0]:
-                        continue
-                    candles = pairs[0]["candles"]
-                    prices = [float(c["close"]) for c in candles if "close" in c]
-                    rsi = calculate_rsi(prices)
-                    if DEBUG_MODE:
-                        print(f"[DEBUG] RSI {token_symbol}: {rsi}")
-                    if rsi is None or rsi >= 30:
-                        continue
-                else:
-                    rsi = None
-
                 quote_entry = query_0x_quote(base_addr, token_addr, sell_amount, f"{base_token}->{token_symbol}")
                 if not quote_entry or "buyAmount" not in quote_entry:
                     if DEBUG_MODE:
-                        print(f"[DEBUG] No quote for {base_token}->{token_symbol}")
+                        print(f"[DEBUG] No quote or missing buyAmount for {key}")
                     continue
 
                 buy_amount_token = int(quote_entry["buyAmount"])
                 if buy_amount_token == 0:
+                    if DEBUG_MODE:
+                        print(f"[DEBUG] buyAmount == 0 for {key}")
                     continue
 
                 profit_estimate = ((buy_amount_token / sell_amount) - 1) * 100
-                if DEBUG_MODE:
-                    print(f"[DEBUG] Profit {base_token}->{token_symbol}: {profit_estimate:.2f}%")
-
                 if profit_estimate < min_profit_percent:
+                    if DEBUG_MODE:
+                        print(f"[DEBUG] Profit too low {profit_estimate:.2f}% for {key}")
                     continue
 
                 platforms_used = extract_platforms(quote_entry.get("protocols", []))
                 if not platforms_used:
                     if DEBUG_MODE:
-                        print(f"[DEBUG] No platforms for {base_token}->{token_symbol}")
+                        print(f"[DEBUG] No platforms found for {key}")
                     continue
 
-                timing_min = 3 + int(((30 - (rsi or 25)) / 10))
+                timing_min = 5
                 timing_sec = timing_min * 60
 
                 time_start = now.strftime("%H:%M")
@@ -278,7 +209,6 @@ def run_real_strategy():
                 print(f"[REAL] Trade predicted: {msg_entry}")
 
                 tracked_trades[key] = time.time()
-
                 time.sleep(timing_sec)
 
                 quote_exit = query_0x_quote(token_addr, base_addr, buy_amount_token, f"{token_symbol}->{base_token}")
