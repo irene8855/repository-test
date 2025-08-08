@@ -4,7 +4,6 @@ import time
 import datetime
 import pytz
 import requests
-
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -53,8 +52,8 @@ DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/"
 
 MAX_REQUESTS_PER_SECOND = 5
 REQUEST_INTERVAL = 1 / MAX_REQUESTS_PER_SECOND
-BAN_DURATION_SECONDS = 900
-MIN_404_INTERVAL = 120
+BAN_DURATION_SECONDS = 900  # 15 минут
+MIN_404_INTERVAL = 120  # 2 минуты
 
 # runtime state
 ban_list = {}
@@ -274,7 +273,7 @@ def run_real_strategy():
                             f"Time: {get_local_time().strftime('%H:%M')}\n"
                             f"Token: {token_symbol}"
                         )
-                    except:
+                    except Exception:
                         pass
                 ban_list[key] = time.time()
 
