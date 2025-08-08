@@ -62,7 +62,6 @@ per_pair_404_last_sent = {}
 
 # --- Utilities ---
 def send_telegram(msg: str):
-    """Send a message to telegram (safe)."""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         if DEBUG_MODE:
             print("[Telegram] Token or chat id not configured.")
@@ -90,10 +89,7 @@ def query_0x_quote(sell_token: str, buy_token: str, sell_amount: int, symbol_pai
             return resp.json()
         elif resp.status_code == 404:
             ban_list[key] = time.time()
-            now = time.time()
-            last_sent = per_pair_404_last_sent.get(key, 0)
-            if now - last_sent > MIN_404_INTERVAL:
-                per_pair_404_last_sent[key] = now
+            per_pair_404_last_sent[key] = time.time()
             if DEBUG_MODE:
                 print(f"[0x API] 404 for {symbol_pair}; banned {BAN_DURATION_SECONDS}s")
             return None
@@ -168,13 +164,11 @@ def run_real_strategy():
     min_profit_percent = 1.0
     sell_amount_usd = 50
     last_request_time = 0
-
-    last_report_time = time.time()  # для отчёта каждые 15 минут
+    last_report_time = time.time()
 
     while True:
         cycle_start_time = time.time()
 
-        # Профайлер — статистика цикла
         profiler = {
             "ban_skips": 0,
             "cooldown_skips": 0,
@@ -194,13 +188,11 @@ def run_real_strategy():
                 if token_symbol == base_token:
                     continue
                 profiler["total_checked_pairs"] += 1
-
                 key = (base_token, token_symbol)
 
                 if key in ban_list:
                     profiler["ban_skips"] += 1
                     continue
-
                 if time.time() - tracked_trades.get(key, 0) < BAN_DURATION_SECONDS:
                     profiler["cooldown_skips"] += 1
                     continue
@@ -221,8 +213,12 @@ def run_real_strategy():
                     candles = pairs[0].get("candles", [])
                     prices = [float(c["close"]) for c in candles if "close" in c]
                     rsi = calculate_rsi(prices)
-                    if rsi is None or rsi >= 30:
-                        profiler["profit_gt_min_skipped"].append((token_symbol, f"RSI={rsi if rsi is not None else 'None'}"))
+
+                    # Новый фильтр: пропускаем RSI=None, отсекаем только RSI > 70
+                    if rsi is not None and rsi > 70:
+                        profiler["profit_gt_min_skipped"].append(
+                            (token_symbol, f"RSI={rsi:.2f}")
+                        )
                         continue
 
                 quote_entry = query_0x_quote(base_addr, token_addr, sell_amount, f"{base_token}->{token_symbol}")
@@ -260,6 +256,7 @@ def run_real_strategy():
                     f"TIME FOR START: {time_start}\n"
                     f"TIME FOR SELL: {time_sell}\n"
                     f"PROFIT: {profit_estimate:.2f}% 💸\n"
+                    f"RSI: {rsi:.2f if rsi is not None else 'N/A'}\n"
                     f"PLATFORMS: {', '.join(platforms_used)} 📊\n"
                     f"{url}"
                 )
@@ -284,7 +281,6 @@ def run_real_strategy():
                         pass
                 ban_list[key] = time.time()
 
-        # === Отчёт профайлера ===
         cycle_time = time.time() - cycle_start_time
         report_msg = (
             f"===== PROFILER REPORT =====\n"
@@ -304,11 +300,9 @@ def run_real_strategy():
 
         print(report_msg)
 
-        # Отправка отчёта в Telegram каждые 15 минут
-        now = time.time()
-        if now - last_report_time >= 900:  # 900 секунд = 15 минут
+        if time.time() - last_report_time >= 900:
             send_telegram(report_msg)
-            last_report_time = now
+            last_report_time = time.time()
 
 if __name__ == "__main__":
     try:
