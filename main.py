@@ -169,6 +169,8 @@ def run_real_strategy():
     sell_amount_usd = 50
     last_request_time = 0
 
+    last_report_time = time.time()  # для отчёта каждые 15 минут
+
     while True:
         cycle_start_time = time.time()
 
@@ -177,6 +179,8 @@ def run_real_strategy():
             "ban_skips": 0,
             "cooldown_skips": 0,
             "profit_gt_min_skipped": [],
+            "total_checked_pairs": 0,
+            "successful_trades": 0,
         }
 
         clean_ban_list()
@@ -189,6 +193,8 @@ def run_real_strategy():
             for token_symbol, token_addr in TOKENS.items():
                 if token_symbol == base_token:
                     continue
+                profiler["total_checked_pairs"] += 1
+
                 key = (base_token, token_symbol)
 
                 if key in ban_list:
@@ -216,7 +222,7 @@ def run_real_strategy():
                     prices = [float(c["close"]) for c in candles if "close" in c]
                     rsi = calculate_rsi(prices)
                     if rsi is None or rsi >= 30:
-                        profiler["profit_gt_min_skipped"].append((token_symbol, f"RSI={rsi:.2f}"))
+                        profiler["profit_gt_min_skipped"].append((token_symbol, f"RSI={rsi if rsi is not None else 'None'}"))
                         continue
 
                 quote_entry = query_0x_quote(base_addr, token_addr, sell_amount, f"{base_token}->{token_symbol}")
@@ -258,6 +264,7 @@ def run_real_strategy():
                     f"{url}"
                 )
                 send_telegram(msg_entry)
+                profiler["successful_trades"] += 1
                 tracked_trades[key] = time.time()
 
                 time.sleep(timing_sec)
@@ -279,17 +286,29 @@ def run_real_strategy():
 
         # === Отчёт профайлера ===
         cycle_time = time.time() - cycle_start_time
-        print("\n===== PROFILER REPORT =====")
-        print(f"⏱ Время полного цикла: {cycle_time:.2f} сек")
-        print(f"🚫 Пар в бан-листе: {profiler['ban_skips']}")
-        print(f"💤 Пропущено по cooldown: {profiler['cooldown_skips']}")
+        report_msg = (
+            f"===== PROFILER REPORT =====\n"
+            f"⏱ Время полного цикла: {cycle_time:.2f} сек\n"
+            f"🚫 Пар в бан-листе: {profiler['ban_skips']}\n"
+            f"💤 Пропущено по cooldown: {profiler['cooldown_skips']}\n"
+            f"💰 Пар с прибылью > {min_profit_percent}% (но не отправлены): {len(profiler['profit_gt_min_skipped'])}\n"
+        )
         if profiler["profit_gt_min_skipped"]:
-            print(f"💰 Пар с прибылью > {min_profit_percent}% (но не отправлены): {len(profiler['profit_gt_min_skipped'])}")
             for sym, reason in profiler["profit_gt_min_skipped"]:
-                print(f"   - {sym}: {reason}")
+                report_msg += f"   - {sym}: {reason}\n"
         else:
-            print("💰 Все пары с прибылью были отправлены.")
-        print("===========================\n")
+            report_msg += "💰 Все пары с прибылью были отправлены.\n"
+        report_msg += f"✔️ Успешных торгов за цикл: {profiler['successful_trades']}\n"
+        report_msg += f"🔍 Всего проверено пар: {profiler['total_checked_pairs']}\n"
+        report_msg += "===========================\n"
+
+        print(report_msg)
+
+        # Отправка отчёта в Telegram каждые 15 минут
+        now = time.time()
+        if now - last_report_time >= 900:  # 900 секунд = 15 минут
+            send_telegram(report_msg)
+            last_report_time = now
 
 if __name__ == "__main__":
     try:
