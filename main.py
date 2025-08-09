@@ -8,15 +8,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- Settings ---
+# --- Настройки ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
 
-# timezone
 LONDON_TZ = pytz.timezone("Europe/London")
 
-# --- Tokens & decimals ---
+# Токены и адреса
 TOKENS = {
     "USDT": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
     "USDC": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
@@ -33,7 +32,7 @@ TOKENS = {
     "AAVE": "0xD6DF932A45C0f255f85145f286eA0b292B21C90B",
     "LDO": "0xc3c7d422809852031b44ab29eec9f1eff2a58756",
     "POL": "0x0000000000000000000000000000000000001010",
-    "WETH": "0x11CD37bb86F65419713f30673A480EA33c826872",
+    "WETH": "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619",
     "SUSHI": "0x0b3F868E0BE5597D5DB7fEB59E1CADBb0fdDa50a"
 }
 
@@ -60,7 +59,8 @@ ban_list = {}
 tracked_trades = {}
 per_pair_404_last_sent = {}
 
-# --- Utilities ---
+# --- Функции ---
+
 def send_telegram(msg: str):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         if DEBUG_MODE:
@@ -89,9 +89,7 @@ def query_0x_quote(sell_token: str, buy_token: str, sell_amount: int, symbol_pai
             return resp.json()
         elif resp.status_code == 404:
             now = time.time()
-            # Баним пару и запоминаем время
             ban_list[key] = now
-            # Также фиксируем время последнего 404 для отчетов
             per_pair_404_last_sent[key] = now
             if DEBUG_MODE:
                 print(f"[0x API] 404 for {symbol_pair}; banned {BAN_DURATION_SECONDS}s")
@@ -160,14 +158,13 @@ def calculate_rsi(prices, period=14):
     rs = avg_gain / avg_loss
     return 100.0 - (100.0 / (1.0 + rs))
 
-# --- Main strategy ---
+# --- Основная логика ---
 def run_real_strategy():
     send_telegram("🤖 Bot started (real strategy).")
     base_tokens = ["USDT"]
     min_profit_percent = 1.0
     sell_amount_usd = 50
     last_request_time = 0
-    last_report_time = time.time()
 
     while True:
         cycle_start_time = time.time()
@@ -193,7 +190,6 @@ def run_real_strategy():
                 profiler["total_checked_pairs"] += 1
                 key = (base_token, token_symbol)
 
-                # Проверяем бан и сообщаем почему в отчет
                 if key in ban_list:
                     profiler["ban_skips"] += 1
                     continue
@@ -241,7 +237,7 @@ def run_real_strategy():
 
                 platforms_used = extract_platforms(quote_entry.get("protocols", []))
                 if not platforms_used:
-                    profiler["profit_gt_min_skipped"].append((token_symbol, "Нет поддерживаемых платформ"))
+                    profiler["profit_gt_min_skipped"].append((token_symbol, "No supported platforms"))
                     continue
 
                 timing_min = 3
@@ -286,43 +282,30 @@ def run_real_strategy():
 
         cycle_time = time.time() - cycle_start_time
 
-        # Формируем расширенный отчет с банами и временем до снятия
         now_ts = time.time()
+        banned_pairs = []
+        for pair, ts in ban_list.items():
+            seconds_left = int(BAN_DURATION_SECONDS - (now_ts - ts))
+            banned_pairs.append(f"{pair} (left {seconds_left}s)")
+
         report_msg = (
             f"===== PROFILER REPORT =====\n"
-            f"⏱ Время полного цикла: {cycle_time:.2f} сек\n"
-            f"🚫 Пар в бан-листе: {profiler['ban_skips']}\n"
+            f"⏱ Cycle time: {cycle_time:.2f} sec\n"
+            f"🚫 Ban skips: {profiler['ban_skips']}\n"
+            f"⏳ Cooldown skips: {profiler['cooldown_skips']}\n"
+            f"✅ Successful trades: {profiler['successful_trades']}\n"
+            f"🔍 Total checked pairs: {profiler['total_checked_pairs']}\n"
+            f"🚫 Banned pairs: {len(ban_list)}\n"
+            + ("\n".join(banned_pairs) if banned_pairs else "None") + "\n"
+            f"⏸ Skipped due to RSI or other: {len(profiler['profit_gt_min_skipped'])}\n"
         )
-        if profiler['ban_skips'] > 0:
-            report_msg += "Бан-лист детали:\n"
-            for pair in ban_list:
-                seconds_left = int(BAN_DURATION_SECONDS - (now_ts - ban_list[pair]))
-                reason = "404 Not Found от 0x API"
-                report_msg += f"  - {pair[0]}->{pair[1]}: причина - {reason}, время до снятия бана: {seconds_left} сек\n"
-        report_msg += (
-            f"💤 Пропущено по cooldown: {profiler['cooldown_skips']}\n"
-            f"💰 Пар с прибылью > {min_profit_percent}% (но не отправлены): {len(profiler['profit_gt_min_skipped'])}\n"
-        )
-        if profiler["profit_gt_min_skipped"]:
-            for sym, reason in profiler["profit_gt_min_skipped"]:
-                report_msg += f"   - {sym}: {reason}\n"
-        else:
-            report_msg += "💰 Все пары с прибылью были отправлены.\n"
-        report_msg += f"✔️ Успешных торгов за цикл: {profiler['successful_trades']}\n"
-        report_msg += f"🔍 Всего проверено пар: {profiler['total_checked_pairs']}\n"
-        report_msg += "===========================\n"
+        send_telegram(report_msg)
 
-        print(report_msg)
-
-        if time.time() - last_report_time >= 900:
-            send_telegram(report_msg)
-            last_report_time = time.time()
+        time.sleep(1)  # пауза между циклами, при необходимости
 
 if __name__ == "__main__":
     try:
         run_real_strategy()
-    except Exception as e:
-        send_telegram(f"❗ Bot crashed with exception: {e}")
-        if DEBUG_MODE:
-            print(f"[CRASH] {e}")
-            
+    except KeyboardInterrupt:
+        print("Bot stopped by user.")
+        
