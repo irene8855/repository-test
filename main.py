@@ -52,12 +52,11 @@ DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/"
 MAX_REQUESTS_PER_SECOND = 5
 REQUEST_INTERVAL = 1 / MAX_REQUESTS_PER_SECOND
 BAN_DURATION_SECONDS = 900  # 15 минут
-MIN_404_INTERVAL = 120  # 2 минуты
 
 # runtime state
 ban_list = {}
 tracked_trades = {}
-per_pair_404_last_sent = {}
+last_report_time = 0  # время последнего отчёта в Telegram
 
 # --- Функции ---
 
@@ -90,7 +89,6 @@ def query_0x_quote(sell_token: str, buy_token: str, sell_amount: int, symbol_pai
         elif resp.status_code == 404:
             now = time.time()
             ban_list[key] = now
-            per_pair_404_last_sent[key] = now
             if DEBUG_MODE:
                 print(f"[0x API] 404 for {symbol_pair}; banned {BAN_DURATION_SECONDS}s")
             return None
@@ -121,7 +119,6 @@ def clean_ban_list():
     to_remove = [pair for pair, ts in ban_list.items() if now_ts - ts > BAN_DURATION_SECONDS]
     for pair in to_remove:
         del ban_list[pair]
-        per_pair_404_last_sent.pop(pair, None)
         if DEBUG_MODE:
             print(f"[BAN] {pair} removed (expired)")
 
@@ -160,6 +157,7 @@ def calculate_rsi(prices, period=14):
 
 # --- Основная логика ---
 def run_real_strategy():
+    global last_report_time
     send_telegram("🤖 Bot started (real strategy).")
     base_tokens = ["USDT"]
     min_profit_percent = 1.0
@@ -280,28 +278,29 @@ def run_real_strategy():
                         pass
                 ban_list[key] = time.time()
 
-        cycle_time = time.time() - cycle_start_time
-
+        # Отчёт в Telegram не чаще чем каждые 15 минут
         now_ts = time.time()
-        banned_pairs = []
-        for pair, ts in ban_list.items():
-            seconds_left = int(BAN_DURATION_SECONDS - (now_ts - ts))
-            banned_pairs.append(f"{pair} (left {seconds_left}s)")
+        if now_ts - last_report_time > BAN_DURATION_SECONDS:
+            banned_pairs = []
+            for pair, ts in ban_list.items():
+                seconds_left = int(BAN_DURATION_SECONDS - (now_ts - ts))
+                banned_pairs.append(f"{pair} (left {seconds_left}s)")
 
-        report_msg = (
-            f"===== PROFILER REPORT =====\n"
-            f"⏱ Cycle time: {cycle_time:.2f} sec\n"
-            f"🚫 Ban skips: {profiler['ban_skips']}\n"
-            f"⏳ Cooldown skips: {profiler['cooldown_skips']}\n"
-            f"✅ Successful trades: {profiler['successful_trades']}\n"
-            f"🔍 Total checked pairs: {profiler['total_checked_pairs']}\n"
-            f"🚫 Banned pairs: {len(ban_list)}\n"
-            + ("\n".join(banned_pairs) if banned_pairs else "None") + "\n"
-            f"⏸ Skipped due to RSI or other: {len(profiler['profit_gt_min_skipped'])}\n"
-        )
-        send_telegram(report_msg)
+            report_msg = (
+                f"===== PROFILER REPORT =====\n"
+                f"⏱ Cycle time: {time.time() - cycle_start_time:.2f} sec\n"
+                f"🚫 Ban skips: {profiler['ban_skips']}\n"
+                f"⏳ Cooldown skips: {profiler['cooldown_skips']}\n"
+                f"✅ Successful trades: {profiler['successful_trades']}\n"
+                f"🔍 Total checked pairs: {profiler['total_checked_pairs']}\n"
+                f"🚫 Banned pairs: {len(ban_list)}\n"
+                + ("\n".join(banned_pairs) if banned_pairs else "None") + "\n"
+                f"⏸ Skipped due to RSI or other: {len(profiler['profit_gt_min_skipped'])}\n"
+            )
+            send_telegram(report_msg)
+            last_report_time = now_ts
 
-        time.sleep(1)  # пауза между циклами, при необходимости
+        time.sleep(1)  # пауза между циклами
 
 if __name__ == "__main__":
     try:
