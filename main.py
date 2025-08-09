@@ -88,8 +88,11 @@ def query_0x_quote(sell_token: str, buy_token: str, sell_amount: int, symbol_pai
         if resp.status_code == 200:
             return resp.json()
         elif resp.status_code == 404:
-            ban_list[key] = time.time()
-            per_pair_404_last_sent[key] = time.time()
+            now = time.time()
+            # Баним пару и запоминаем время
+            ban_list[key] = now
+            # Также фиксируем время последнего 404 для отчетов
+            per_pair_404_last_sent[key] = now
             if DEBUG_MODE:
                 print(f"[0x API] 404 for {symbol_pair}; banned {BAN_DURATION_SECONDS}s")
             return None
@@ -190,6 +193,7 @@ def run_real_strategy():
                 profiler["total_checked_pairs"] += 1
                 key = (base_token, token_symbol)
 
+                # Проверяем бан и сообщаем почему в отчет
                 if key in ban_list:
                     profiler["ban_skips"] += 1
                     continue
@@ -214,7 +218,6 @@ def run_real_strategy():
                     prices = [float(c["close"]) for c in candles if "close" in c]
                     rsi = calculate_rsi(prices)
 
-                    # Новый фильтр: пропускаем RSI=None, отсекаем только RSI > 70
                     if rsi is not None and rsi > 70:
                         profiler["profit_gt_min_skipped"].append(
                             (token_symbol, f"RSI={rsi:.2f}")
@@ -282,10 +285,21 @@ def run_real_strategy():
                 ban_list[key] = time.time()
 
         cycle_time = time.time() - cycle_start_time
+
+        # Формируем расширенный отчет с банами и временем до снятия
+        now_ts = time.time()
         report_msg = (
             f"===== PROFILER REPORT =====\n"
             f"⏱ Время полного цикла: {cycle_time:.2f} сек\n"
             f"🚫 Пар в бан-листе: {profiler['ban_skips']}\n"
+        )
+        if profiler['ban_skips'] > 0:
+            report_msg += "Бан-лист детали:\n"
+            for pair in ban_list:
+                seconds_left = int(BAN_DURATION_SECONDS - (now_ts - ban_list[pair]))
+                reason = "404 Not Found от 0x API"
+                report_msg += f"  - {pair[0]}->{pair[1]}: причина - {reason}, время до снятия бана: {seconds_left} сек\n"
+        report_msg += (
             f"💤 Пропущено по cooldown: {profiler['cooldown_skips']}\n"
             f"💰 Пар с прибылью > {min_profit_percent}% (но не отправлены): {len(profiler['profit_gt_min_skipped'])}\n"
         )
