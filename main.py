@@ -1,4 +1,19 @@
 # -*- coding: utf-8 -*-
+"""
+Arbitrage / scanner bot (ready to deploy)
+
+Environment variables (example):
+TELEGRAM_TOKEN=...
+TELEGRAM_CHAT_ID=...
+ZEROX_API_KEY=...              # optional but recommended
+ZEROX_SKIP_VALIDATION=False    # if "true" -> add slippagePercentage & enableSlippageProtection
+ZEROX_SLIPPAGE=0.01            # default 1% (0.01)
+SELL_AMOUNT_USD=50             # default USD amount to sell per quote
+MIN_PROFIT_PERCENT=1.0         # minimum profit %
+RUN_MODE=real                  # 'real' or 'dry' (doesn't affect quoting but used in messages)
+REPORT_INTERVAL=900            # seconds (default 900 = 15 minutes)
+DEBUG_MODE=True
+"""
 import os
 import time
 import datetime
@@ -8,26 +23,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# -------- CONFIG from ENV --------
+# --- Settings (from env) ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-ZEROX_API_KEY = os.getenv("ZEROX_API_KEY")  # recommended
+ZEROX_API_KEY = os.getenv("ZEROX_API_KEY")  # optional but recommended
 ZEROX_SKIP_VALIDATION = os.getenv("ZEROX_SKIP_VALIDATION", "False").lower() == "true"
-ZEROX_SLIPPAGE = float(os.getenv("ZEROX_SLIPPAGE", "0.01"))  # 0.01 == 1%
-
-SELL_AMOUNT_USD = float(os.getenv("SELL_AMOUNT_USD", "50"))  # USD
-MIN_PROFIT_PERCENT = float(os.getenv("MIN_PROFIT_PERCENT", "1.0"))  # %
-REPORT_INTERVAL = int(os.getenv("REPORT_INTERVAL", "900"))  # seconds (default 15 min)
-
-REAL_TRADING = os.getenv("REAL_TRADING", "false").lower() == "true"  # if False -> dry, but messages still sent
-RUN_MODE = os.getenv("RUN_MODE", "real").lower()
+ZEROX_SLIPPAGE = float(os.getenv("ZEROX_SLIPPAGE", "0.01"))  # default 1% (0.01)
+SELL_AMOUNT_USD = float(os.getenv("SELL_AMOUNT_USD", "50"))
+MIN_PROFIT_PERCENT = float(os.getenv("MIN_PROFIT_PERCENT", "1.0"))
+RUN_MODE = os.getenv("RUN_MODE", "real").lower()  # 'real' or 'dry'
+REPORT_INTERVAL = int(os.getenv("REPORT_INTERVAL", "900"))
 DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
 
 # timezone
 LONDON_TZ = pytz.timezone("Europe/London")
 
-# -------- TOKENS & DECIMALS (Polygon addresses as provided) --------
+# --- Tokens & decimals (polygon) ---
 TOKENS = {
     "USDT": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
     "USDC": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
@@ -35,7 +46,7 @@ TOKENS = {
     "FRAX": "0x45c32fA6DF82ead1e2EF74d17b76547EDdFaFF89",
     "wstETH": "0x03b54A6e9a984069379fae1a4fC4dBAE93B3bCCD",
     "BET": "0xbF7970D56a150cD0b60BD08388A4A75a27777777",
-    "WPOL": "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270",
+    "WPOL": "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270",  # WMATIC
     "tBTC": "0x236aa50979d5f3de3bd1eeb40e81137f22ab794b",
     "SAND": "0xBbba073C31bF03b8ACf7c28EF0738DeCF3695683",
     "GMT": "0x714DB550b574b3E927af3D93E26127D15721D4C2",
@@ -58,25 +69,29 @@ DECIMALS = {
 RSI_TOKENS = {"AAVE", "LINK", "EMT", "LDO", "SUSHI", "GMT", "SAND", "tBTC", "wstETH", "WETH"}
 PLATFORMS = {"1inch": "1inch", "Sushi": "SushiSwap", "Uniswap": "UniswapV3"}
 
-# 0x v2 permit2 price endpoint
+# --- 0x API v2 permit2 price endpoint ---
 API_0X_URL = "https://api.0x.org/swap/permit2/price"
 CHAIN_ID = 137
 
-DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/"
+# --- Limits & timings ---
+MAX_REQUESTS_PER_SECOND = 5
+REQUEST_INTERVAL = 1 / MAX_REQUESTS_PER_SECOND
 
-# rate limits and ban durations
-MAX_REQUESTS_PER_SECOND = int(os.getenv("MAX_REQUESTS_PER_SECOND", "5"))
-REQUEST_INTERVAL = 1.0 / MAX_REQUESTS_PER_SECOND
+# Ban durations
 BAN_NO_LIQUIDITY_REASON = "No liquidity"
-BAN_NO_LIQUIDITY_DURATION = int(os.getenv("BAN_NO_LIQUIDITY_DURATION", "120"))  # 2 min default
-BAN_OTHER_REASON_DURATION = int(os.getenv("BAN_OTHER_REASON_DURATION", "900"))  # 15 min default
+BAN_NO_LIQUIDITY_DURATION = 120   # 2 minutes
+BAN_OTHER_REASON_DURATION = 900   # 15 minutes (default post-trade / errors)
 
 # runtime state
 ban_list = {}          # key: (base_symbol, token_symbol) -> {"time": ts, "reason": str, "duration": int}
-tracked_trades = {}    # key -> last trade timestamp
-last_report_time = 0
+tracked_trades = {}    # key -> last trade timestamp (post-trade cooldown)
+last_report_time = 0   # last time a Telegram report was sent
 
-# ----------------- Helpers -----------------
+# Dexscreener API
+DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/"
+
+# ---------- Utility functions ----------
+
 def mask_key_for_log(key: str) -> str:
     if not key:
         return "<none>"
@@ -85,39 +100,44 @@ def mask_key_for_log(key: str) -> str:
     return key[:4] + ("*" * (len(key) - 8)) + key[-4:]
 
 def send_telegram(msg: str):
+    """Send a Telegram message (safe if token missing — prints when DEBUG_MODE)."""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         if DEBUG_MODE:
-            print("[Telegram] (no token/chat) message would be:\n", msg)
+            print("[Telegram] (dry) message:\n", msg)
         return
     try:
-        requests.post(
+        resp = requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
             data={"chat_id": TELEGRAM_CHAT_ID, "text": msg}
         )
+        if resp.status_code != 200 and DEBUG_MODE:
+            print(f"[Telegram] Error ({resp.status_code}): {resp.text}")
     except Exception as e:
         if DEBUG_MODE:
-            print(f"[Telegram] Exception: {e}")
+            print(f"[Telegram] Exception while sending Telegram message: {e}")
 
 def get_local_time():
     return datetime.datetime.now(datetime.timezone.utc).astimezone(LONDON_TZ)
 
 def ban_pair(key, reason, duration=None):
+    """Add pair to ban_list with reason and duration (use short duration for no liquidity)."""
     now_ts = time.time()
     if duration is None:
-        if BAN_NO_LIQUIDITY_REASON.lower() in reason.lower() or "404" in reason:
+        if BAN_NO_LIQUIDITY_REASON.lower() in (reason or "").lower() or "404" in (reason or ""):
             duration = BAN_NO_LIQUIDITY_DURATION
         else:
             duration = BAN_OTHER_REASON_DURATION
     ban_list[key] = {"time": now_ts, "reason": reason, "duration": duration}
     if DEBUG_MODE:
-        print(f"[BAN] {key} -> {reason} (for {duration}s)")
+        print(f"[BAN] {key} -> reason: {reason}, duration: {duration}s")
 
 def clean_ban_list():
     now_ts = time.time()
     to_remove = [pair for pair, info in ban_list.items() if now_ts - info["time"] > info["duration"]]
     for pair in to_remove:
         if DEBUG_MODE:
-            print(f"[BAN] Removing expired ban for {pair} (reason={ban_list[pair].get('reason')})")
+            info = ban_list.get(pair, {})
+            print(f"[BAN] Removing expired ban for {pair}: reason={info.get('reason')} (expired)")
         ban_list.pop(pair, None)
 
 def extract_platforms(protocols):
@@ -138,7 +158,8 @@ def extract_platforms(protocols):
         pass
     return list(found)
 
-# --------------- Dexscreener helpers ----------------
+# ---------- Dexscreener helpers ----------
+
 def fetch_dexscreener_data(token_addr):
     try:
         resp = requests.get(f"{DEXSCREENER_API}{token_addr}", timeout=8)
@@ -155,10 +176,9 @@ def fetch_dexscreener_data(token_addr):
 
 def get_token_price_usd(token_addr):
     """
-    Try to obtain USD price via Dexscreener:
-     - pairs[0]['priceUsd'] if available
-     - fallback to last candle close
-    Returns float priceUSD or None
+    Try to obtain USD price for token via Dexscreener:
+    - prefer pairs[0]['priceUsd']
+    - otherwise use last candle close
     """
     ds = fetch_dexscreener_data(token_addr)
     if not ds:
@@ -167,14 +187,12 @@ def get_token_price_usd(token_addr):
     if not pairs:
         return None
     p0 = pairs[0]
-    # try priceUsd
     try:
         price = p0.get("priceUsd")
         if price:
             return float(price)
     except Exception:
         pass
-    # fallback to last candle close
     try:
         candles = p0.get("candles", [])
         if candles:
@@ -193,9 +211,11 @@ def calculate_rsi(prices, period=14):
     for i in range(-period, 0):
         delta = prices[i] - prices[i - 1]
         if delta > 0:
-            gains.append(delta); losses.append(0)
+            gains.append(delta)
+            losses.append(0)
         else:
-            gains.append(0); losses.append(abs(delta))
+            gains.append(0)
+            losses.append(abs(delta))
     avg_gain = sum(gains) / period
     avg_loss = sum(losses) / period
     if avg_loss == 0:
@@ -203,8 +223,15 @@ def calculate_rsi(prices, period=14):
     rs = avg_gain / avg_loss
     return 100.0 - (100.0 / (1.0 + rs))
 
-# ----------------- 0x price query (v2 / permit2 /price) -----------------
+# ---------- 0x v2 price query ----------
+
 def query_0x_price(sell_token: str, buy_token: str, sell_amount: int, symbol_pair=""):
+    """
+    Query 0x v2 /swap/permit2/price endpoint.
+    Adds required headers. If ZEROX_SKIP_VALIDATION is True, add slippage params.
+    On 200 — returns parsed JSON (if route available / liquidityAvailable true)
+    On no-liquidity or 404 — bans short (2 min). Other HTTP errors ban 15 min.
+    """
     key = tuple(symbol_pair.split("->")) if symbol_pair else (sell_token, buy_token)
     params = {
         "sellToken": sell_token,
@@ -213,7 +240,7 @@ def query_0x_price(sell_token: str, buy_token: str, sell_amount: int, symbol_pai
         "chainId": CHAIN_ID
     }
 
-    # add slippage/protection if enabled
+    # add slippage/protection only when skip validation is enabled per discussion
     if ZEROX_SKIP_VALIDATION:
         params["slippagePercentage"] = str(ZEROX_SLIPPAGE)
         params["enableSlippageProtection"] = "true"
@@ -224,11 +251,12 @@ def query_0x_price(sell_token: str, buy_token: str, sell_amount: int, symbol_pai
 
     if DEBUG_MODE:
         if "0x-api-key" in headers:
-            print(f"[0x] headers: 0x-version=v2, 0x-api-key={mask_key_for_log(headers.get('0x-api-key'))}")
+            print(f"[0x] Request headers: 0x-version=v2, 0x-api-key={mask_key_for_log(headers.get('0x-api-key'))}")
         else:
-            print("[0x] headers: 0x-version=v2 (no key)")
-        sample_params = {k: params[k] for k in list(params)[:4]}
-        print(f"[0x] request params sample for {symbol_pair}: {sample_params} ...")
+            print("[0x] Request headers: 0x-version=v2 (no api key)")
+        # print truncated params for debug
+        sample = {k: params[k] for k in list(params)[:4]}
+        print(f"[0x] Request params sample for {symbol_pair}: {sample} ...")
 
     try:
         resp = requests.get(API_0X_URL, params=params, headers=headers, timeout=12)
@@ -247,14 +275,14 @@ def query_0x_price(sell_token: str, buy_token: str, sell_amount: int, symbol_pai
                 print(f"[0x] Invalid JSON for {symbol_pair}: {resp.text[:200]}")
             return None
 
-        # v2: check liquidityAvailable
+        # v2: liquidityAvailable boolean
         if "liquidityAvailable" in data and (data.get("liquidityAvailable") is False):
             ban_pair(key, BAN_NO_LIQUIDITY_REASON, duration=BAN_NO_LIQUIDITY_DURATION)
             if DEBUG_MODE:
-                print(f"[0x] liquidityAvailable=false for {symbol_pair}")
+                print(f"[0x] No liquidity for {symbol_pair} (liquidityAvailable=false).")
             return None
 
-        # fallback: check route / fills
+        # fallback: check route/fills presence
         if "route" in data:
             route = data.get("route")
             fills = []
@@ -268,7 +296,7 @@ def query_0x_price(sell_token: str, buy_token: str, sell_amount: int, symbol_pai
             if not fills:
                 ban_pair(key, BAN_NO_LIQUIDITY_REASON, duration=BAN_NO_LIQUIDITY_DURATION)
                 if DEBUG_MODE:
-                    print(f"[0x] empty route/fills for {symbol_pair}")
+                    print(f"[0x] Empty route/fills for {symbol_pair}.")
                 return None
 
         return data
@@ -276,7 +304,7 @@ def query_0x_price(sell_token: str, buy_token: str, sell_amount: int, symbol_pai
     elif resp.status_code == 404:
         ban_pair(key, BAN_NO_LIQUIDITY_REASON, duration=BAN_NO_LIQUIDITY_DURATION)
         if DEBUG_MODE:
-            print(f"[0x] 404 for {symbol_pair}")
+            print(f"[0x] 404 for {symbol_pair}; banned short.")
         return None
     else:
         reason_text = f"HTTP {resp.status_code}"
@@ -290,30 +318,25 @@ def query_0x_price(sell_token: str, buy_token: str, sell_amount: int, symbol_pai
             print(f"[0x] Error {resp.status_code} for {symbol_pair}: {resp.text[:200]}")
         return None
 
-# ----------------- Profit calc (USD aware) -----------------
+# ---------- Profit calculation (USD-aware) ----------
+
+def symbol_by_addr(addr):
+    for s,a in TOKENS.items():
+        if a.lower() == (addr or "").lower():
+            return s
+    return None
+
 def compute_profit_usd(quote_buy, sell_token_addr, buy_token_addr, sell_amount_raw):
     """
-    Compute net profit in USD:
-      - parse buyAmount
-      - get token decimals by symbol mapping
-      - fetch USD prices (Dexscreener) for sell & buy tokens
-      - consider totalNetworkFee (wei -> native -> USD)
-      - try to include fees.integratorFee / zeroExFee / gasFee if present
-    Returns (net_profit_usd, sell_usd, buy_usd, fees_usd) or (None,...)
+    Compute profit in USD using quote_buy (0x price response) for sell_token -> buy_token.
+    Returns (net_profit_usd, sell_usd, buy_usd, fees_usd) or (None, ...) on failure to compute.
     """
-    # parse buy amount
     try:
         buy_amount_raw = int(quote_buy.get("buyAmount", 0))
     except Exception:
         return (None, None, None, None)
     if buy_amount_raw == 0:
         return (None, None, None, None)
-
-    def symbol_by_addr(addr):
-        for s,a in TOKENS.items():
-            if a.lower() == (addr or "").lower():
-                return s
-        return None
 
     sell_sym = symbol_by_addr(sell_token_addr)
     buy_sym = symbol_by_addr(buy_token_addr)
@@ -325,21 +348,23 @@ def compute_profit_usd(quote_buy, sell_token_addr, buy_token_addr, sell_amount_r
 
     sell_price = get_token_price_usd(sell_token_addr)
     buy_price = get_token_price_usd(buy_token_addr)
-    # assume stablecoins 1 USD if missing
-    if sell_price is None and sell_sym in ("USDT", "USDC"):
+
+    # assume stablecoins if price missing
+    if not sell_price and sell_sym in ("USDT", "USDC"):
         sell_price = 1.0
-    if buy_price is None and buy_sym in ("USDT", "USDC"):
+    if not buy_price and buy_sym in ("USDT", "USDC"):
         buy_price = 1.0
 
     if sell_price is None or buy_price is None:
-        # cannot compute exact USD profit
+        # can't compute exact USD profit
         return (None, sell_units * (sell_price or 0), buy_units * (buy_price or 0), None)
 
     sell_usd = sell_units * sell_price
     buy_usd = buy_units * buy_price
 
     fees_usd = 0.0
-    # totalNetworkFee often in wei -> convert to native token (e.g., WMATIC) then USD
+
+    # totalNetworkFee usually in wei (native). Convert via WPOL (native) price
     try:
         total_network_fee_str = quote_buy.get("totalNetworkFee")
         if total_network_fee_str:
@@ -350,49 +375,50 @@ def compute_profit_usd(quote_buy, sell_token_addr, buy_token_addr, sell_amount_r
     except Exception:
         pass
 
-    # consider fees.integratorFee / zeroExFee / gasFee if provided as token amounts
+    # additional fees in quote_buy.get("fees", {})
     try:
-        fees_obj = quote_buy.get("fees", {}) or {}
-        for fee_key in ("integratorFee", "zeroExFee", "gasFee"):
-            f = fees_obj.get(fee_key)
-            if f and isinstance(f, dict):
-                amt = f.get("amount")
-                token_addr = f.get("token")
-                if amt and token_addr:
-                    try:
-                        amt_raw = float(amt)
-                        fee_sym = symbol_by_addr(token_addr)
-                        fee_dec = DECIMALS.get(fee_sym, 18)
-                        amt_units = amt_raw / (10 ** fee_dec)
-                        fee_price = get_token_price_usd(token_addr)
-                        if fee_price:
-                            fees_usd += amt_units * fee_price
-                    except Exception:
-                        pass
+        fees_obj = quote_buy.get("fees", {})
+        if fees_obj and isinstance(fees_obj, dict):
+            for fee_key in ("integratorFee", "zeroExFee", "gasFee"):
+                f = fees_obj.get(fee_key)
+                if f and isinstance(f, dict):
+                    amt = f.get("amount")
+                    token_addr = f.get("token")
+                    if amt and token_addr:
+                        try:
+                            amt_raw = float(amt)
+                            fee_sym = symbol_by_addr(token_addr)
+                            fee_dec = DECIMALS.get(fee_sym, 18)
+                            amt_units = amt_raw / (10 ** fee_dec)
+                            fee_price = get_token_price_usd(token_addr)
+                            if fee_price:
+                                fees_usd += amt_units * fee_price
+                        except Exception:
+                            pass
     except Exception:
         pass
 
     net_profit_usd = buy_usd - sell_usd - fees_usd
     return (net_profit_usd, sell_usd, buy_usd, fees_usd)
 
-# ----------------- Main strategy -----------------
+# ---------- Main strategy ----------
+
 def run_real_strategy():
     global last_report_time
-    send_telegram(f"🤖 Bot started. Mode: {RUN_MODE} | REAL_TRADING: {REAL_TRADING}")
+    send_telegram("🤖 Bot started (real strategy). Mode: " + RUN_MODE)
     base_tokens = ["USDT"]
     sell_amount_usd = SELL_AMOUNT_USD
     last_request_time = 0
-    REPORT_INTERVAL_LOCAL = REPORT_INTERVAL
 
     while True:
         cycle_start_time = time.time()
         profiler = {
             "ban_skips": 0,
             "cooldown_skips": 0,
-            "profit_gt_min_skipped": [],
+            "profit_gt_min_skipped": [],  # (symbol, reason)
+            "filtered_skipped": [],       # (symbol, reason) from dexscreener etc.
             "total_checked_pairs": 0,
             "successful_trades": 0,
-            "filtered_skipped": [],
         }
 
         clean_ban_list()
@@ -408,57 +434,66 @@ def run_real_strategy():
                 profiler["total_checked_pairs"] += 1
                 key = (base_token, token_symbol)
 
-                # skip banned
+                # skip if banned
                 if key in ban_list:
                     profiler["ban_skips"] += 1
                     continue
 
-                # post-trade cooldown (global 15min for other reasons)
+                # cooldown after trade
                 if time.time() - tracked_trades.get(key, 0) < BAN_OTHER_REASON_DURATION:
                     profiler["cooldown_skips"] += 1
                     continue
 
-                # rate limiting
+                # rate-limit
                 elapsed = time.time() - last_request_time
                 if elapsed < REQUEST_INTERVAL:
                     time.sleep(REQUEST_INTERVAL - elapsed)
                 last_request_time = time.time()
 
-                # RSI filter (if token in RSI_TOKENS)
+                # prefilter via Dexscreener for liquidity/prices & RSI
                 rsi = None
-                if token_symbol in RSI_TOKENS:
-                    ds_data = fetch_dexscreener_data(token_addr)
-                    if not ds_data:
+                if token_symbol in RSI_TOKENS or True:
+                    ds = fetch_dexscreener_data(token_addr)
+                    if not ds:
                         profiler["filtered_skipped"].append((token_symbol, "Dexscreener failed"))
+                        # To reduce 0x calls, skip if Dexscreener not available
                         continue
-                    pairs = ds_data.get("pairs", [])
+                    pairs = ds.get("pairs", [])
                     if not pairs:
                         profiler["filtered_skipped"].append((token_symbol, "No pairs on Dexscreener"))
                         continue
-                    candles = pairs[0].get("candles", [])
-                    prices = [float(c["close"]) for c in candles if "close" in c]
-                    rsi = calculate_rsi(prices)
-                    if rsi is not None and rsi > 70:
-                        profiler["profit_gt_min_skipped"].append((token_symbol, f"RSI={rsi:.2f}"))
-                        continue
+                    # compute RSI only for RSI_TOKENS
+                    if token_symbol in RSI_TOKENS:
+                        try:
+                            candles = pairs[0].get("candles", [])
+                            prices = [float(c.get("close")) for c in candles if "close" in c]
+                            rsi = calculate_rsi(prices)
+                            if rsi is not None and rsi > 70:
+                                profiler["profit_gt_min_skipped"].append((token_symbol, f"RSI={rsi:.2f}"))
+                                continue
+                        except Exception:
+                            # if RSI computation fails - just skip RSI step
+                            if DEBUG_MODE:
+                                print(f"[RSI] failed for {token_symbol}")
+                            rsi = None
 
-                # Query 0x for quote (sell base -> buy token)
+                # Query 0x price (sell base -> buy token)
                 symbol_pair = f"{base_token}->{token_symbol}"
                 quote_entry = query_0x_price(base_addr, token_addr, sell_amount_raw, symbol_pair)
                 if not quote_entry or "buyAmount" not in quote_entry:
-                    # If the pair was banned due to No liquidity, try reverse direction as informational fallback.
-                    # We do not execute reverse trades automatically here, but this helps find liquidity direction.
-                    if key in ban_list and BAN_NO_LIQUIDITY_REASON.lower() in ban_list[key]["reason"].lower():
+                    # If no liquidity in forward, try reverse direction as informational fallback (do not trade automatically)
+                    if key in ban_list and BAN_NO_LIQUIDITY_REASON.lower() in (ban_list[key].get("reason") or "").lower():
+                        # attempt reverse with equivalent USD sell amount in token units
                         dec_token = DECIMALS.get(token_symbol, 18)
                         sell_amount_rev = int(sell_amount_usd * (10 ** dec_token))
                         if DEBUG_MODE:
-                            print(f"[Fallback] Trying reverse {token_symbol}->{base_token} (informational) sellAmount ~{sell_amount_usd} USD")
+                            print(f"[Fallback] trying reverse {token_symbol}->{base_token} with sellAmount ~{sell_amount_usd} USD")
                         quote_rev = query_0x_price(token_addr, base_addr, sell_amount_rev, f"{token_symbol}->{base_token}")
                         if quote_rev and "buyAmount" in quote_rev:
-                            profiler["profit_gt_min_skipped"].append((token_symbol, "Reverse route exists; forward had no liquidity"))
+                            profiler["profit_gt_min_skipped"].append((token_symbol, "Reverse route exists; original forward had no route"))
                         else:
-                            # nothing available; skip
-                            pass
+                            # keep as filtered because no route
+                            profiler["filtered_skipped"].append((token_symbol, "No route (0x)"))
                     continue
 
                 # parse buy amount
@@ -471,13 +506,14 @@ def run_real_strategy():
                     ban_pair(key, BAN_NO_LIQUIDITY_REASON, duration=BAN_NO_LIQUIDITY_DURATION)
                     continue
 
-                # Compute USD profit using quote & prices
+                # compute profit in USD using available fees
                 profit_calc = compute_profit_usd(quote_entry, base_addr, token_addr, sell_amount_raw)
                 if profit_calc[0] is None:
+                    # couldn't compute USD profit reliably -> skip to avoid bad trades
                     profiler["profit_gt_min_skipped"].append((token_symbol, "Could not compute USD profit"))
                     continue
-
                 net_profit_usd, sell_usd, buy_usd, fees_usd = profit_calc
+
                 if not sell_usd or sell_usd == 0:
                     profiler["profit_gt_min_skipped"].append((token_symbol, "Sell USD unknown"))
                     continue
@@ -485,10 +521,10 @@ def run_real_strategy():
                 profit_percent = (net_profit_usd / sell_usd) * 100
 
                 if profit_percent < MIN_PROFIT_PERCENT:
-                    profiler["profit_gt_min_skipped"].append((token_symbol, f"Profit {profit_percent:.2f}% < {MIN_PROFIT_PERCENT}%"))
+                    profiler["profit_gt_min_skipped"].append((token_symbol, f"{profit_percent:.2f}% < {MIN_PROFIT_PERCENT}%"))
                     continue
 
-                # extract platforms
+                # extract platforms used by route (protocols or route.fills)
                 platforms_used = extract_platforms(quote_entry.get("protocols", [])) if quote_entry.get("protocols") else []
                 if not platforms_used and "route" in quote_entry:
                     try:
@@ -499,10 +535,10 @@ def run_real_strategy():
                         elif isinstance(route, list):
                             fills = route
                         for f in fills:
-                            source = f.get("source", "")
-                            for pk, pn in PLATFORMS.items():
-                                if pk.lower() in (source or "").lower():
-                                    platforms_used.append(pn)
+                            source = f.get("source", "") or ""
+                            for platform_key, platform_name in PLATFORMS.items():
+                                if platform_key.lower() in source.lower():
+                                    platforms_used.append(platform_name)
                     except Exception:
                         pass
 
@@ -510,7 +546,7 @@ def run_real_strategy():
                     profiler["profit_gt_min_skipped"].append((token_symbol, "No supported platforms"))
                     continue
 
-                # timing logic
+                # compute timing (use RSI to vary hold if available)
                 timing_min = 3
                 if rsi is not None:
                     timing_min = min(8, max(3, 3 + int(max(0, (30 - rsi)) // 6)))
@@ -520,8 +556,7 @@ def run_real_strategy():
                 time_sell = (get_local_time() + datetime.timedelta(seconds=timing_sec)).strftime("%H:%M")
                 url = f"https://1inch.io/#/polygon/swap/{base_addr}/{token_addr}"
 
-                rsi_str = f"{rsi:.2f}" if (rsi is not None) else "N/A"
-                fees_usd_safe = fees_usd if fees_usd is not None else 0.0
+                rsi_str = (f"{rsi:.2f}" if (rsi is not None) else "N/A")
 
                 pre_msg = (
                     f"{base_token} -> {token_symbol} -> {base_token} 📈\n"
@@ -529,31 +564,30 @@ def run_real_strategy():
                     f"TIME FOR START: {time_start}\n"
                     f"TIME FOR SELL: {time_sell}\n"
                     f"PROFIT ESTIMATE: {profit_percent:.2f}% 💸\n"
-                    f"SELL USD: {sell_usd:.6f}, BUY USD: {buy_usd:.6f}, FEES USD: {fees_usd_safe:.6f}\n"
+                    f"SELL USD: {sell_usd:.6f}, BUY USD: {buy_usd:.6f}, FEES USD: {fees_usd:.6f}\n"
                     f"RSI: {rsi_str}\n"
                     f"PLATFORMS: {', '.join(platforms_used)} 📊\n"
                     f"{url}"
                 )
-
-                # Always send message about the planned trade (even if REAL_TRADING == False)
+                # send pre-trade message (always send according to your requirement)
                 send_telegram(pre_msg)
 
                 profiler["successful_trades"] += 1
                 tracked_trades[key] = time.time()
 
-                # sleep until planned sell (simulate hold)
+                # wait until planned sell time (simulate holding)
                 time.sleep(timing_sec)
 
-                # Query exit quote (sell token -> buy base) using token units we would have obtained
+                # exit quote (sell token -> buy base) using token units received
                 quote_exit = query_0x_price(token_addr, base_addr, buy_amount_token, f"{token_symbol}->{base_token}")
                 if quote_exit and "buyAmount" in quote_exit:
                     try:
-                        # compute final P&L using exit quote too
+                        final_amount_exit = int(quote_exit["buyAmount"])
+                        # recompute using exit quote to produce final P&L in USD if possible
                         exit_calc = compute_profit_usd(quote_exit, token_addr, base_addr, buy_amount_token)
                         if exit_calc[0] is not None and exit_calc[1]:
-                            # final buy USD and fees
-                            exit_net_usd, exit_sell_usd, exit_buy_usd, exit_fees_usd = exit_calc
-                            # overall net relative to initial sell_usd:
+                            final_net, exit_sell_usd, exit_buy_usd, exit_fees_usd = exit_calc
+                            # compute overall net relative to initial sell_usd
                             overall_net_usd = exit_buy_usd - sell_usd - (fees_usd + (exit_fees_usd or 0.0))
                             overall_profit_percent = (overall_net_usd / sell_usd) * 100
                             send_telegram(
@@ -563,6 +597,7 @@ def run_real_strategy():
                                 f"Token: {token_symbol}"
                             )
                         else:
+                            # fallback message
                             send_telegram(
                                 f"✅ TRADE COMPLETED\n"
                                 f"Time: {get_local_time().strftime('%H:%M')}\n"
@@ -570,21 +605,22 @@ def run_real_strategy():
                             )
                     except Exception:
                         if DEBUG_MODE:
-                            print(f"[Trade] Parsing exit failed for {token_symbol}: {quote_exit}")
+                            print(f"[Trade] Failed to parse exit buyAmount for {token_symbol}: {quote_exit}")
                         send_telegram(
                             f"✅ TRADE COMPLETED (result parsing failed)\n"
                             f"Time: {get_local_time().strftime('%H:%M')}\n"
                             f"Token: {token_symbol}"
                         )
                 else:
+                    # exit failed — ban pair for other reason and notify
                     ban_pair(key, "Exit quote failed", duration=BAN_OTHER_REASON_DURATION)
 
-                # post-trade cooldown ban 15 min (other reason)
+                # apply post-trade cooldown (15 minutes)
                 ban_pair(key, "Post-trade cooldown", duration=BAN_OTHER_REASON_DURATION)
 
-        # Periodic aggregated report (every REPORT_INTERVAL_LOCAL)
+        # Periodic detailed report to Telegram every REPORT_INTERVAL seconds
         now_ts = time.time()
-        if now_ts - last_report_time >= REPORT_INTERVAL_LOCAL:
+        if now_ts - last_report_time >= REPORT_INTERVAL:
             clean_ban_list()
             banned_pairs_lines = []
             for pair, info in ban_list.items():
@@ -604,12 +640,14 @@ def run_real_strategy():
                 f"💤 Пропущено по cooldown: {profiler['cooldown_skips']}\n"
                 f"💰 Пар с прибылью > {MIN_PROFIT_PERCENT}% (но не отправлены): {len(profiler['profit_gt_min_skipped'])}\n"
             )
-            if profiler['profit_gt_min_skipped']:
-                for sym, reason in profiler['profit_gt_min_skipped']:
+            if profiler["profit_gt_min_skipped"]:
+                for sym, reason in profiler["profit_gt_min_skipped"]:
                     report_msg += f"   - {sym}: {reason}\n"
-            if profiler['filtered_skipped']:
+            else:
+                report_msg += "💰 Все пары с прибылью были отправлены.\n"
+            if profiler["filtered_skipped"]:
                 report_msg += "🔎 Пропущенные (dexscreener/price issues):\n"
-                for sym, reason in profiler['filtered_skipped']:
+                for sym, reason in profiler["filtered_skipped"]:
                     report_msg += f"   - {sym}: {reason}\n"
             report_msg += f"✔️ Успешных торгов за цикл: {profiler['successful_trades']}\n"
             report_msg += f"🔍 Всего проверено пар: {profiler['total_checked_pairs']}\n"
@@ -618,9 +656,10 @@ def run_real_strategy():
             send_telegram(report_msg)
             last_report_time = now_ts
 
-        # small sleep to avoid busy-loop
+        # small sleep to avoid busy loop; main pacing by rate-limits and time.sleep during trades
         time.sleep(0.5)
 
+# ---------- Entrypoint ----------
 
 if __name__ == "__main__":
     try:
@@ -628,10 +667,11 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("Bot stopped by user.")
     except Exception as e:
+        # notify via Telegram if possible
         try:
-            send_telegram(f"❗ Bot crashed with exception: {repr(e)}")
+            send_telegram(f"❗ Bot crashed with exception: {e}")
         except Exception:
             pass
         if DEBUG_MODE:
-            print("[CRASH]", repr(e))
+            print(f"[CRASH] {e}")
             
