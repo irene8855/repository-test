@@ -14,37 +14,42 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
 
-# Аналитик-режим (без автосвопов)
-REAL_TRADING = os.getenv("REAL_TRADING", "False").lower() == "true"
-
-# Интервалы/параметры
-REPORT_INTERVAL = int(os.getenv("REPORT_INTERVAL", "900"))        # 15 мин
-SELL_AMOUNT_USD = float(os.getenv("SELL_AMOUNT_USD", "50"))       # «вход» в базовой валюте ~USD
-MIN_PROFIT_PERCENT = float(os.getenv("MIN_PROFIT_PERCENT", "1.0"))
-STOP_LOSS_PERCENT  = float(os.getenv("STOP_LOSS_PERCENT", "-1.0"))
-SLIPPAGE_PERCENT   = float(os.getenv("SLIPPAGE_PERCENT", "0.01")) # 1% = 0.01
-TRY_REVERSE_ON_NO_ROUTE = os.getenv("TRY_REVERSE_ON_NO_ROUTE", "True").lower() == "true"
-
-# 1inch API (ключ опционален)
-ONEINCH_API_KEY = os.getenv("ONEINCH_API_KEY", "").strip()
-
-# Таймзона для сообщений
+# Таймзона как ты используешь
 LONDON_TZ = pytz.timezone("Europe/London")
 
-# ===================== TOKENS & DECIMALS =====================
-# Polygon (chainId=137) адреса
+# Торговые настройки анализа/симуляции
+SELL_AMOUNT_USD = float(os.getenv("SELL_AMOUNT_USD", "50"))
+
+# Порог отправки сигнала (минимальная оценка прибыли)
+MIN_PROFIT_PERCENT = float(os.getenv("MIN_PROFIT_PERCENT", "1.0"))       # %, по умолчанию 1.0
+STOP_LOSS_PERCENT  = float(os.getenv("STOP_LOSS_PERCENT", "-1.0"))       # %, по умолчанию -1.0
+
+# Интервал отчёта в секундах
+REPORT_INTERVAL = int(float(os.getenv("REPORT_INTERVAL", "900")))        # 900 сек = 15 мин
+
+# Сколько запросов в секунду не превышаем
+MAX_REQUESTS_PER_SECOND = 5
+REQUEST_INTERVAL = 1 / MAX_REQUESTS_PER_SECOND
+
+# 1inch API key (не обязателен)
+ONEINCH_API_KEY = os.getenv("ONEINCH_API_KEY", "").strip()
+
+# Флаг: если 1inch не даёт маршрут base->token, попробуем обратный для бана
+TRY_REVERSE_ON_NO_ROUTE = True
+
+# ===================== ТОКЕНЫ (Polygon, chainId=137) =====================
 TOKENS = {
     "USDT":   "0xc2132d05d31c914a87c6611c10748aeb04b58e8f",
     "USDC":   "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359",
     "DAI":    "0x8f3cf7ad23cd3cadbd9735aff958023239c6a063",
     "FRAX":   "0x45c32fa6df82ead1e2ef74d17b76547eddfaff89",
     "wstETH": "0x03b54a6e9a984069379fae1a4fc4dbae93b3bccd",
-    "BET":    "0xbf7970d56a150cd0b60bd08388a4a75a27777777",
+    "BET":    "0xbf7970d56a150cd0b60bd08388a4a75a27777777",  # оставляю как в твоём наборе
     "WPOL":   "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270",
     "tBTC":   "0x236aa50979d5f3de3bd1eeb40e81137f22ab794b",
     "SAND":   "0xbbba073c31bf03b8acf7c28ef0738decf3695683",
     "GMT":    "0x714db550b574b3e927af3d93e26127d15721d4c2",
-    "LINK":   "0x53e0bca35ec356bd5dddfebbD1fc0fd03fabAD39".lower(),
+    "LINK":   "0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39",
     "EMT":    "0x708383ae0e80e75377d664e4d6344404dede119a",
     "AAVE":   "0xd6df932a45c0f255f85145f286ea0b292b21c90b",
     "LDO":    "0xc3c7d422809852031b44ab29eec9f1eff2a58756",
@@ -57,7 +62,7 @@ DECIMALS = {
     "USDT": 6, "USDC": 6, "DAI": 18, "FRAX": 18, "wstETH": 18,
     "BET": 18, "WPOL": 18, "tBTC": 18, "SAND": 18, "GMT": 8,
     "LINK": 18, "EMT": 18, "AAVE": 18, "LDO": 18, "POL": 18,
-    "WETH": 18, "SUSHI": 18
+    "WETH": 18, "SUSHI": 18,
 }
 
 # Обратный словарь: адрес -> символ
@@ -78,9 +83,6 @@ DEXSCREENER_TOKEN_URL = "https://api.dexscreener.com/latest/dex/tokens/"
 UNISWAP_V3_POLY = "https://api.thegraph.com/subgraphs/name/ianlapham/uniswap-v3-polygon"
 
 # ===================== LIMITS & RUNTIME STATE =====================
-MAX_REQUESTS_PER_SECOND = 5
-REQUEST_INTERVAL = 1 / MAX_REQUESTS_PER_SECOND
-
 BAN_NO_LIQUIDITY_REASON = "No liquidity"
 BAN_NO_LIQUIDITY_DURATION = 120  # 2 мин
 BAN_OTHER_REASON_DURATION = 900  # 15 мин
@@ -98,7 +100,7 @@ def send_telegram(msg: str):
     try:
         r = requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            data={"chat_id": TELEGRAM_CHAT_ID, "text": msg}
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}
         )
         if r.status_code != 200 and DEBUG_MODE:
             print(f"[Telegram] HTTP {r.status_code}: {r.text}")
@@ -129,24 +131,18 @@ def clean_ban_list():
                 print(f"[BAN] Remove expired: {pair} (reason={info['reason']})")
             ban_list.pop(pair, None)
 
-# ===================== DEXSCREENER =====================
+# ===================== DEXSCREENER HELPERS =====================
 def fetch_dexscreener_pairs(token_addr):
     try:
-        resp = requests.get(DEXSCREENER_TOKEN_URL + token_addr, timeout=8)
-    except Exception as e:
-        if DEBUG_MODE:
-            print(f"[Dexscreener] Request error for {token_addr}: {e}")
-        return None
-    if resp.status_code != 200:
+        resp = requests.get(DEXSCREENER_TOKEN_URL + token_addr, timeout=10)
+        if resp.status_code == 200:
+            return resp.json()
         if DEBUG_MODE:
             print(f"[Dexscreener] HTTP {resp.status_code}: {resp.text[:200]}")
-        return None
-    try:
-        return resp.json()
-    except Exception:
+    except Exception as e:
         if DEBUG_MODE:
-            print(f"[Dexscreener] JSON parse error (token={token_addr})")
-        return None
+            print(f"[Dexscreener] Error: {e}")
+    return None
 
 def get_token_usd_price_from_dxs(token_addr):
     data = fetch_dexscreener_pairs(token_addr)
@@ -178,20 +174,51 @@ def calculate_rsi(prices, period=14):
     for i in range(-period, 0):
         delta = prices[i] - prices[i - 1]
         if delta > 0:
-            gains.append(delta); losses.append(0)
+            gains.append(delta)
         else:
-            gains.append(0); losses.append(abs(delta))
-    avg_gain = sum(gains) / period
-    avg_loss = sum(losses) / period
+            losses.append(-delta)
+    if not gains and not losses:
+        return None
+    avg_gain = sum(gains) / period if gains else 0.0
+    avg_loss = sum(losses) / period if losses else 0.0
     if avg_loss == 0:
         return 100.0
     rs = avg_gain / avg_loss
-    return 100.0 - (100.0 / (1.0 + rs))
+    return 100 - (100 / (1 + rs))
 
-# ===================== HELPERS =====================
 def safe_format_rsi(rsi):
-    return f"{rsi:.2f}" if (rsi is not None) else "N/A"
+    if rsi is None:
+        return "—"
+    try:
+        return f"{float(rsi):.2f}"
+    except Exception:
+        return "—"
 
+# ===================== PROFIT IN USD (оценка) =====================
+def compute_profit_percent_by_units(sell_amount_units, final_amount_units, base_symbol="USDT", token_symbol=None):
+    try:
+        base_price_usd = get_token_usd_price_from_dxs(TOKENS.get(base_symbol))
+        base_dec = DECIMALS.get(base_symbol, 18)
+        sell_tokens = sell_amount_units / (10 ** base_dec)
+        usd_sell = sell_tokens * base_price_usd if base_price_usd is not None else None
+    except Exception:
+        usd_sell = None
+
+    token_price_usd = get_token_usd_price_from_dxs(TOKENS.get(token_symbol)) if token_symbol else None
+    if token_price_usd is None:
+        return (usd_sell, None, None)
+    try:
+        token_dec = DECIMALS.get(token_symbol, 18)
+        final_tokens = final_amount_units / (10 ** token_dec)
+        usd_final = final_tokens * token_price_usd
+        if usd_sell is None:
+            return (None, usd_final, None)
+        profit_usd_pct = (usd_final / usd_sell - 1) * 100
+        return (usd_sell, usd_final, profit_usd_pct)
+    except Exception:
+        return (usd_sell, None, None)
+
+# ===================== ROUTE PARSER =====================
 def extract_platforms(protocols_field):
     platforms_used = []
     try:
@@ -205,33 +232,6 @@ def extract_platforms(protocols_field):
     except Exception:
         pass
     return platforms_used
-
-def compute_profit_percent_by_units(sell_amount_units, final_amount_units):
-    try:
-        return ((final_amount_units / sell_amount_units) - 1) * 100
-    except Exception:
-        return None
-
-def compute_profit_usd(sell_amount_units, final_amount_units, base_symbol, token_symbol):
-    try:
-        base_dec = DECIMALS.get(base_symbol, 18)
-        usd_sell = (sell_amount_units / (10 ** base_dec))
-    except Exception:
-        usd_sell = None
-
-    token_price_usd = get_token_usd_price_from_dxs(TOKENS.get(token_symbol))
-    if token_price_usd is None:
-        return (usd_sell, None, None)
-    try:
-        token_dec = DECIMALS.get(token_symbol, 18)
-        final_tokens = final_amount_units / (10 ** token_dec)
-        usd_final = final_tokens * token_price_usd
-        if usd_sell is None:
-            return (None, usd_final, None)
-        profit_usd_pct = (usd_final / usd_sell - 1) * 100
-        return (usd_sell, usd_final, profit_usd_pct)
-    except Exception:
-        return (usd_sell, None, None)
 
 # ===================== 1INCH + FALLBACK =====================
 def query_1inch_price(sell_token_addr: str, buy_token_addr: str, sell_amount_units: int, symbol_pair=""):
@@ -251,37 +251,38 @@ def query_1inch_price(sell_token_addr: str, buy_token_addr: str, sell_amount_uni
         "src": sell_token_addr,
         "dst": buy_token_addr,
         "amount": str(sell_amount_units),
-        "includeTokensInfo": "true",
+        "disableEstimate": "true",
+        "includeTokensInfo": "false",
         "includeProtocols": "true",
-        "slippage": str(int(SLIPPAGE_PERCENT * 100)),  # 0.01 -> "1"
+        "includeGas": "false",
     }
 
-    attempts = []
-    headers = {"Accept": "application/json"}
+    endpoints = []
     if ONEINCH_API_KEY:
-        headers_with_key = {**headers, "Authorization": f"Bearer {ONEINCH_API_KEY}"}
-        attempts.append((ONEINCH_V6_DEV, headers_with_key))
-    attempts.append((ONEINCH_V6_DEV, headers))
-    attempts.append((ONEINCH_V5_PUBLIC, headers))
+        endpoints.append(("v6_dev_auth", ONEINCH_V6_DEV, {"Authorization": f"Bearer {ONEINCH_API_KEY}"}))
+    endpoints.append(("v6_dev_noauth", ONEINCH_V6_DEV, {}))
+    endpoints.append(("v5_public", ONEINCH_V5_PUBLIC, {}))
 
-    last_err_snippet = ""
-    for url, hdrs in attempts:
+    last_err_snippet = None
+
+    for name, url, headers in endpoints:
         try:
-            resp = requests.get(url, params=params, headers=hdrs, timeout=12)
-        except requests.exceptions.RequestException as e:
-            last_err_snippet = f"Request exception: {e}"
+            resp = requests.get(url, params=params, headers=headers, timeout=12)
+        except Exception as e:
+            last_err_snippet = f"HTTP error: {e}"
             continue
 
         if resp.status_code == 200:
+            # Иногда 1inch отдаёт «Invalid JSON» — ловим и логируем полный текст
             try:
                 data = resp.json()
             except Exception:
-                # Логируем полный ответ при Invalid JSON
-                raw = resp.text[:500]
+                raw = resp.text[:1000]
                 last_err_snippet = f"Invalid JSON. Raw: {raw}"
                 if DEBUG_MODE:
                     print(f"[1inch] Invalid JSON for {symbol_pair} at {url}\nRaw:\n{raw}")
-                continue  # пробуем следующий эндпоинт сразу
+                # Ретрай — переходим к следующему эндпоинту каскада
+                continue
 
             buy_amount = data.get("toTokenAmount") or data.get("dstAmount")
             if not buy_amount:
@@ -313,6 +314,7 @@ def query_1inch_price(sell_token_addr: str, buy_token_addr: str, sell_amount_uni
                 last_err_snippet = resp.text[:300].replace("\n", " ")
             except Exception:
                 last_err_snippet = f"HTTP {resp.status_code}"
+            continue
 
     # ---- FALLBACK: Uniswap v3 Polygon subgraph ----
     try:
@@ -336,67 +338,66 @@ def query_1inch_price(sell_token_addr: str, buy_token_addr: str, sell_amount_uni
             derivedWMATIC: derivedMatic
             decimals
           }}
-          bundle(id: "1") {{
+          b: bundles(first: 1) {{
             ethPriceUSD
-            maticPriceUSD: ethPriceUSD
+            maticPriceUSD
           }}
         }}
         """
+        r = requests.post(UNISWAP_V3_POLY, json={"query": query}, timeout=12)
+        if r.status_code != 200:
+            if DEBUG_MODE:
+                print(f"[Fallback] Subgraph HTTP {r.status_code}: {r.text[:300]}")
+            return None
+        j = r.json()
+        t1 = (j.get("data") or {}).get("t1") or {}
+        t2 = (j.get("data") or {}).get("t2") or {}
+        b  = (j.get("data") or {}).get("b") or []
+        b  = b[0] if b else {}
 
-        resp_uni = requests.post(UNISWAP_V3_POLY, json={"query": query}, timeout=10)
-        if resp_uni.status_code == 200:
-            jd = resp_uni.json().get("data", {})
-            t1 = jd.get("t1")
-            t2 = jd.get("t2")
-            b  = jd.get("bundle")
-            if t1 and t2 and b:
-                # читаем цены (поддержим derivedETH и derivedMatic)
-                def _num(x):
-                    try:
-                        return float(x) if x is not None else None
-                    except Exception:
-                        return None
-                # попытки достать derived...
-                t1_der = _num(t1.get("derivedETH")) or _num(t1.get("derivedMatic")) or _num(t1.get("derivedWMATIC"))
-                t2_der = _num(t2.get("derivedETH")) or _num(t2.get("derivedMatic")) or _num(t2.get("derivedWMATIC"))
-                eth_usd = _num(b.get("ethPriceUSD")) or _num(b.get("maticPriceUSD"))
+        def _num(x):
+            try:
+                return float(x)
+            except Exception:
+                return None
 
-                if t1_der and t2_der and eth_usd:
-                    t1_usd = t1_der * eth_usd
-                    t2_usd = t2_der * eth_usd
+        t1_der = _num(t1.get("derivedETH")) or _num(t1.get("derivedMatic")) or _num(t1.get("derivedWMATIC"))
+        t2_der = _num(t2.get("derivedETH")) or _num(t2.get("derivedMatic")) or _num(t2.get("derivedWMATIC"))
+        eth_usd = _num(b.get("ethPriceUSD")) or _num(b.get("maticPriceUSD"))
 
-                    # найдём символы/десятичность
-                    base_sym  = ADDRESS_TO_SYMBOL.get(base_addr_l)
-                    token_sym = ADDRESS_TO_SYMBOL.get(token_addr_l)
-                    base_dec  = DECIMALS.get(base_sym, 18) if base_sym else (int(t2.get("decimals") or 18))
-                    token_dec = DECIMALS.get(token_sym, 18) if token_sym else (int(t1.get("decimals") or 18))
+        if t1_der and t2_der and eth_usd:
+            t1_usd = t1_der * eth_usd
+            t2_usd = t2_der * eth_usd
 
-                    # пересчёт: base_units -> base_tokens -> USD -> token_tokens -> token_units
-                    base_tokens = sell_amount_units / (10 ** base_dec)
-                    usd_value   = base_tokens * t2_usd
-                    token_tokens = usd_value / t1_usd
-                    buy_amount_units = int(token_tokens * (10 ** token_dec))
+            base_sym  = ADDRESS_TO_SYMBOL.get(base_addr_l)
+            token_sym = ADDRESS_TO_SYMBOL.get(token_addr_l)
+            base_dec  = DECIMALS.get(base_sym, 18) if base_sym else int(t2.get("decimals") or 18)
+            token_dec = DECIMALS.get(token_sym, 18) if token_sym else int(t1.get("decimals") or 18)
 
-                    return {
-                        "buyAmount": str(buy_amount_units),
-                        "protocols": [["UniswapV3"]],
-                        "route": {"fills": []}
-                    }
+            # base_units -> base_tokens -> USD -> token_tokens -> token_units
+            base_tokens = sell_amount_units / (10 ** base_dec)
+            usd_value   = base_tokens * t2_usd
+            token_tokens = usd_value / t1_usd
+            buy_amount_units = int(token_tokens * (10 ** token_dec))
+
+            return {
+                "buyAmount": str(buy_amount_units),
+                "protocols": [["UniswapV3"]],
+                "route": {"fills": []}
+            }
     except Exception as e:
         if DEBUG_MODE:
             print(f"[Fallback Error] Uniswap v3 subgraph: {e}")
 
-    # если всё упало — баним пару
-    ban_pair(key, f"1inch error: {last_err_snippet}", duration=BAN_OTHER_REASON_DURATION)
-    if DEBUG_MODE:
-        print(f"[1inch] Error for {symbol_pair}: {last_err_snippet}")
+    # всё плохо — баним по последней причине
+    ban_pair(key, last_err_snippet or "No route/No quote")
     return None
 
-# ===================== MONITOR (TA/SL) =====================
+# ===================== МОНИТОРИНГ ОКНА УДЕРЖАНИЯ =====================
 def make_monitor(buy_amount_token):
     """
     Возвращает функцию мониторинга окна удержания.
-    buy_amount_token — сколько токена мы «получили» на входе (в юнитах токена).
+    buy_amount_token — сколько токена «получили» на входе (в юнитах токена).
     """
     def _run(entry_sell_amount_units, base_addr, token_addr, base_symbol, token_symbol, timing_sec):
         check_interval = 15
@@ -415,15 +416,13 @@ def make_monitor(buy_amount_token):
                     except Exception:
                         final_amount_exit = None
                     if final_amount_exit:
-                        actual_profit = compute_profit_percent_by_units(entry_sell_amount_units, final_amount_exit)
+                        _, _, actual_profit = compute_profit_percent_by_units(entry_sell_amount_units, final_amount_exit, base_symbol, token_symbol)
                         send_telegram(
                             f"⏳ Время удержания вышло\n"
                             f"Текущая прибыль: {actual_profit:.2f}%\n"
                             f"Time: {get_local_time().strftime('%H:%M')}\n"
-                            f"Token: {token_symbol}"
+                            f"PAIR: {base_symbol}->{token_symbol}"
                         )
-                else:
-                    send_telegram(f"⏳ Время вышло — не удалось обновить котировку выхода для {token_symbol}")
                 break
 
             # промежуточная проверка
@@ -434,7 +433,7 @@ def make_monitor(buy_amount_token):
                 except Exception:
                     final_amount_exit = None
                 if final_amount_exit:
-                    actual_profit = compute_profit_percent_by_units(entry_sell_amount_units, final_amount_exit)
+                    _, _, actual_profit = compute_profit_percent_by_units(entry_sell_amount_units, final_amount_exit, base_symbol, token_symbol)
                     if actual_profit is not None:
                         if (not alerted_take) and actual_profit >= MIN_PROFIT_PERCENT:
                             send_telegram(f"🎯 Цель достигнута: {actual_profit:.2f}% по {token_symbol}")
@@ -461,6 +460,7 @@ def run_real_strategy():
         profiler = {
             "ban_skips": 0,
             "cooldown_skips": 0,
+            "skipped_reasons": {},          # <== собираем причины отсева
             "profit_gt_min_skipped": [],
             "dexscreener_skipped": [],
             "total_checked_pairs": 0,
@@ -485,11 +485,13 @@ def run_real_strategy():
                 # бан-лист
                 if key in ban_list:
                     profiler["ban_skips"] += 1
+                    profiler["skipped_reasons"].setdefault("Ban list", []).append(f"{base_symbol}->{token_symbol}")
                     continue
 
                 # cooldown после «виртуальной сделки»
                 if time.time() - tracked_trades.get(key, 0) < BAN_OTHER_REASON_DURATION:
                     profiler["cooldown_skips"] += 1
+                    profiler["skipped_reasons"].setdefault("Cooldown", []).append(f"{base_symbol}->{token_symbol}")
                     continue
 
                 # pace по API
@@ -498,12 +500,13 @@ def run_real_strategy():
                     time.sleep(REQUEST_INTERVAL - elapsed)
                 last_request_time = time.time()
 
-                # RSI (мягкий): если свечей нет — не стопим сделку
+                # RSI (мягкий): если свечей нет — не стопим сделку, просто отмечаем
                 rsi = None
                 if token_symbol in RSI_TOKENS:
                     candles = get_token_candles(token_addr)
                     if not candles:
                         profiler["dexscreener_skipped"].append((token_symbol, "Dexscreener candles missing"))
+                        profiler["skipped_reasons"].setdefault("Dexscreener candles missing", []).append(token_symbol)
                     else:
                         try:
                             closes = [float(c["close"]) for c in candles if "close" in c]
@@ -512,6 +515,7 @@ def run_real_strategy():
                         rsi = calculate_rsi(closes)
                         if rsi is not None and rsi > 70:
                             profiler["profit_gt_min_skipped"].append((token_symbol, f"RSI={rsi:.2f} (>70)"))
+                            profiler["skipped_reasons"].setdefault("RSI>70", []).append(token_symbol)
                             continue
 
                 # котировка входа: base -> token
@@ -525,24 +529,29 @@ def run_real_strategy():
                             time.sleep(REQUEST_INTERVAL - elapsed)
                         last_request_time = time.time()
                         _ = query_1inch_price(token_addr, base_addr, sell_amount_units, f"{token_symbol}->{base_symbol}")
+                    profiler["skipped_reasons"].setdefault("No quote", []).append(f"{base_symbol}->{token_symbol}")
                     continue
 
                 try:
                     buy_amount_token = int(quote_entry.get("buyAmount", 0))
                 except Exception:
                     ban_pair(key, "Invalid buyAmount in quote", duration=BAN_OTHER_REASON_DURATION)
+                    profiler["skipped_reasons"].setdefault("Invalid buyAmount", []).append(f"{base_symbol}->{token_symbol}")
                     continue
                 if buy_amount_token == 0:
                     ban_pair(key, BAN_NO_LIQUIDITY_REASON, duration=BAN_NO_LIQUIDITY_DURATION)
+                    profiler["skipped_reasons"].setdefault("No liquidity", []).append(f"{base_symbol}->{token_symbol}")
                     continue
 
                 # грубая оценка прибыли в процентах (как фильтр)
                 profit_estimate = ((buy_amount_token / sell_amount_units) - 1) * 100
                 if abs(profit_estimate) > 1e6:
                     profiler["profit_gt_min_skipped"].append((token_symbol, "Unrealistic profit estimate"))
+                    profiler["skipped_reasons"].setdefault("Unrealistic profit", []).append(token_symbol)
                     continue
                 if profit_estimate < MIN_PROFIT_PERCENT:
                     profiler["profit_gt_min_skipped"].append((token_symbol, f"Profit {profit_estimate:.2f}% < {MIN_PROFIT_PERCENT}%"))
+                    profiler["skipped_reasons"].setdefault(f"Low profit < {MIN_PROFIT_PERCENT}%", []).append(token_symbol)
                     continue
 
                 platforms_used = []
@@ -552,7 +561,6 @@ def run_real_strategy():
                     # не стопим из-за отсутствия parse — просто отметим
                     profiler["profit_gt_min_skipped"].append((token_symbol, "No supported platforms parsed"))
                     # можно continue, если хочешь жёстко требовать платформы
-                    # continue
 
                 # тайминг (как у тебя, зависит от RSI)
                 timing_min = 3
@@ -585,7 +593,7 @@ def run_real_strategy():
                 # post-trade cooldown
                 ban_pair(key, "Post-trade cooldown", duration=BAN_OTHER_REASON_DURATION)
 
-        # периодический отчёт
+        # периодический отчёт — всегда, даже без сделок
         now_ts = time.time()
         if now_ts - last_report_time >= report_interval:
             clean_ban_list()
@@ -604,6 +612,7 @@ def run_real_strategy():
             )
             if banned_pairs_lines:
                 report_msg += "Бан-лист детали:\n" + "\n".join(banned_pairs_lines) + "\n"
+
             report_msg += (
                 f"💤 Пропущено по cooldown: {profiler['cooldown_skips']}\n"
                 f"💰 Пар с прибылью > {MIN_PROFIT_PERCENT}% (но не отправлены): {len(profiler['profit_gt_min_skipped'])}\n"
@@ -611,10 +620,19 @@ def run_real_strategy():
             if profiler["profit_gt_min_skipped"]:
                 for sym, reason in profiler["profit_gt_min_skipped"]:
                     report_msg += f"   - {sym}: {reason}\n"
+
             if profiler["dexscreener_skipped"]:
                 report_msg += "🔎 Пропущенные (dexscreener/price issues):\n"
                 for sym, reason in profiler["dexscreener_skipped"]:
                     report_msg += f"   - {sym}: {reason}\n"
+
+            if profiler["skipped_reasons"]:
+                report_msg += "🧹 Причины отсева:\n"
+                for reason, items in profiler["skipped_reasons"].items():
+                    listed = ", ".join(items[:20])
+                    more = "" if len(items) <= 20 else f" (+{len(items)-20} ещё)"
+                    report_msg += f"   - {reason}: {listed}{more}\n"
+
             report_msg += f"✔️ Успешных сигналов за цикл: {profiler['successful_trades']}\n"
             report_msg += f"🔍 Всего проверено пар: {profiler['total_checked_pairs']}\n"
             report_msg += "===========================\n"
