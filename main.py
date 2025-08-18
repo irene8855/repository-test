@@ -2,9 +2,9 @@
 import os
 import time
 import datetime
-import pytz
-import requests
 import threading
+import requests
+import pytz
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -18,16 +18,14 @@ LONDON_TZ = pytz.timezone("Europe/London")
 
 SELL_AMOUNT_USD = float(os.getenv("SELL_AMOUNT_USD", "50"))
 
-MIN_PROFIT_PERCENT = float(os.getenv("MIN_PROFIT_PERCENT", "1.0"))     # %
-STOP_LOSS_PERCENT  = float(os.getenv("STOP_LOSS_PERCENT", "-1.0"))      # %
-
-REPORT_INTERVAL = int(float(os.getenv("REPORT_INTERVAL", "900")))       # 15 мин
+MIN_PROFIT_PERCENT = float(os.getenv("MIN_PROFIT_PERCENT", "1.0"))   # %
+STOP_LOSS_PERCENT  = float(os.getenv("STOP_LOSS_PERCENT", "-1.0"))    # %
+REPORT_INTERVAL = int(float(os.getenv("REPORT_INTERVAL", "900")))     # сек, дефолт 15 мин
 
 MAX_REQUESTS_PER_SECOND = 5
 REQUEST_INTERVAL = 1 / MAX_REQUESTS_PER_SECOND
 
 ONEINCH_API_KEY = os.getenv("ONEINCH_API_KEY", "").strip()
-
 TRY_REVERSE_ON_NO_ROUTE = True
 
 # ===================== TOKENS (Polygon) =====================
@@ -41,7 +39,7 @@ TOKENS = {
     "WPOL":   "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270",
     "tBTC":   "0x236aa50979d5f3de3bd1eeb40e81137f22ab794b",
     "SAND":   "0xbbba073c31bf03b8acf7c28ef0738decf3695683",
-    "GMT":   "0x714db550b574b3e927af3d93e26127d15721d4c2",
+    "GMT":    "0x714db550b574b3e927af3d93e26127d15721d4c2",
     "LINK":   "0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39",
     "EMT":    "0x708383ae0e80e75377d664e4d6344404dede119a",
     "AAVE":   "0xd6df932a45c0f255f85145f286ea0b292b21c90b",
@@ -50,14 +48,12 @@ TOKENS = {
     "WETH":   "0x7ceb23fd6bc0add59e62ac25578270cff1b9f619",
     "SUSHI":  "0x0b3f868e0be5597d5db7feb59e1cadbb0fdda50a",
 }
-
 DECIMALS = {
     "USDT": 6, "USDC": 6, "DAI": 18, "FRAX": 18, "wstETH": 18,
     "BET": 18, "WPOL": 18, "tBTC": 18, "SAND": 18, "GMT": 8,
     "LINK": 18, "EMT": 18, "AAVE": 18, "LDO": 18, "POL": 18,
     "WETH": 18, "SUSHI": 18,
 }
-
 ADDRESS_TO_SYMBOL = {addr.lower(): sym for sym, addr in TOKENS.items()}
 RSI_TOKENS = {"AAVE", "LINK", "EMT", "LDO", "SUSHI", "GMT", "SAND", "tBTC", "wstETH", "WETH"}
 
@@ -72,12 +68,15 @@ UNISWAP_V3_POLY = "https://api.thegraph.com/subgraphs/name/ianlapham/uniswap-v3-
 
 # ===================== BAN & STATE =====================
 BAN_NO_LIQUIDITY_REASON = "No liquidity"
-BAN_NO_LIQUIDITY_DURATION = 120   # 2 минуты
-BAN_OTHER_REASON_DURATION = 900   # 15 минут
+BAN_NO_LIQUIDITY_DURATION = 120       # 2 мин
+BAN_OTHER_REASON_DURATION = 900       # 15 мин
 
-ban_list = {}        # (base, token) -> {time, reason, duration}
-tracked_trades = {}  # (base, token) -> ts последнего сигнала
-last_report_time = 0.0
+ban_list = {}          # (base, token) -> {time, reason, duration}
+tracked_trades = {}    # (base, token) -> ts последнего сигнала
+
+last_report_time = time.time()        # чтобы 1-й отчёт пришёл через REPORT_INTERVAL
+_last_cycle_report = time.time()
+_last_watchdog_ping = 0.0
 
 last_request_time_lock = threading.Lock()
 _last_request_time = 0.0
@@ -92,7 +91,7 @@ def send_telegram(msg: str):
         r = requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
             json={"chat_id": TELEGRAM_CHAT_ID, "text": msg},
-            timeout=10
+            timeout=(5, 10)
         )
         if r.status_code != 200 and DEBUG_MODE:
             print(f"[Telegram] HTTP {r.status_code}: {r.text[:400]}")
@@ -115,7 +114,7 @@ def pace_requests():
 def ban_pair(key, reason, duration=None):
     now_ts = time.time()
     if duration is None:
-        if BAN_NO_LIQUIDITY_REASON.lower() in reason.lower() or "404" in reason:
+        if BAN_NO_LIQUIDITY_REASON.lower() in (reason or "").lower() or "404" in (reason or ""):
             duration = BAN_NO_LIQUIDITY_DURATION
         else:
             duration = BAN_OTHER_REASON_DURATION
@@ -136,7 +135,7 @@ def clean_ban_list():
 def fetch_dexscreener_pairs(token_addr):
     try:
         pace_requests()
-        resp = requests.get(DEXSCREENER_TOKEN_URL + token_addr, timeout=10)
+        resp = requests.get(DEXSCREENER_TOKEN_URL + token_addr, timeout=(5, 10))
         if resp.status_code == 200:
             return resp.json()
         if DEBUG_MODE:
@@ -239,7 +238,7 @@ def extract_platforms(protocols_field):
 def graph_query(query: str, variables: dict):
     try:
         pace_requests()
-        r = requests.post(UNISWAP_V3_POLY, json={"query": query, "variables": variables}, timeout=12)
+        r = requests.post(UNISWAP_V3_POLY, json={"query": query, "variables": variables}, timeout=(5, 10))
         if r.status_code == 200:
             return r.json()
         if DEBUG_MODE:
@@ -251,20 +250,17 @@ def graph_query(query: str, variables: dict):
 
 def univ3_get_best_pool_and_price(token0: str, token1: str):
     """
-    Возвращает (direction, price, liquidity) где:
-      direction = 0 если цена как token1_per_token0 (pool token0->token1),
-                = 1 если цена как token0_per_token1 (pool token1->token0)
-      price = float
-    Ищем среди пулов с наибольшей ликвидностью.
+    Возвращает dict {"price": float, "t0dec": int, "t1dec": int} для цены token1_per_token0
+    по лучшему пулу (max TVL). Если пул в обратном направлении — инвертируем.
     """
     token0 = token0.lower()
     token1 = token1.lower()
     q = """
     query Pools($t0: String!, $t1: String!) {
-      pools(first: 10, where: { token0_in: [$t0, $t1], token1_in: [$t0, $t1] }, orderBy: totalValueLockedUSD, orderDirection: desc) {
-        id
-        token0 { id symbol decimals }
-        token1 { id symbol decimals }
+      pools(first: 10, where: { token0_in: [$t0, $t1], token1_in: [$t0, $t1] },
+            orderBy: totalValueLockedUSD, orderDirection: desc) {
+        token0 { id decimals }
+        token1 { id decimals }
         token0Price
         token1Price
         totalValueLockedUSD
@@ -282,29 +278,29 @@ def univ3_get_best_pool_and_price(token0: str, token1: str):
         tvl = float(p.get("totalValueLockedUSD") or 0.0)
         if not ((t0 == token0 and t1 == token1) or (t0 == token1 and t1 == token0)):
             continue
-        # выбираем пул с наибольшим TVL
         if best is None or tvl > best["tvl"]:
             best = {
-                "t0": t0, "t1": t1, "t0dec": int(p["token0"]["decimals"]), "t1dec": int(p["token1"]["decimals"]),
-                "t0p": float(p["token0Price"]), "t1p": float(p["token1Price"]), "tvl": tvl
+                "t0": t0, "t1": t1,
+                "t0dec": int(p["token0"]["decimals"]),
+                "t1dec": int(p["token1"]["decimals"]),
+                "t0p": float(p["token0Price"]),
+                "t1p": float(p["token1Price"]),
+                "tvl": tvl
             }
     if not best:
         return None
-    # Если best.t0 == token0 и best.t1 == token1 => token1_per_token0 = t0p
-    # Если наоборот => нам нужна цена token1_per_token0 в прямом направлении
     if best["t0"] == token0 and best["t1"] == token1:
-        return {"direction": 0, "price": best["t0p"], "t0dec": best["t0dec"], "t1dec": best["t1dec"]}
+        price = best["t0p"]                         # token1_per_token0
     else:
-        # пул с обратным направлением — используем token0_per_token1 = t1p,
-        # но для конверсии token0->token1 нам нужна именно token1_per_token0 => это 1 / t1p
-        price = 1.0 / best["t1p"] if best["t1p"] != 0 else None
-        return {"direction": 0, "price": price, "t0dec": best["t0dec"], "t1dec": best["t1dec"]}
+        price = 1.0 / best["t1p"] if best["t1p"] != 0 else None  # инверсия
+    if price is None or price <= 0:
+        return None
+    return {"price": price, "t0dec": best["t0dec"], "t1dec": best["t1dec"]}
 
 def univ3_estimate_amount_out(src_addr: str, dst_addr: str, amount_in_units: int):
     """
     Приблизительный quote через Uniswap V3 subgraph: берём лучший пул по TVL и умножаем на цену.
-    Это НЕ учитывает комиссию пула и проскальзывание, но даёт «хвост» вместо полного молчания 1inch.
-    Возвращает {"buyAmount": "<int>"} или None.
+    НЕ учитывает комиссии и проскальзывание. Возвращает dict как у 1inch-quote: {"buyAmount": "..."}.
     """
     src_addr = src_addr.lower()
     dst_addr = dst_addr.lower()
@@ -312,29 +308,32 @@ def univ3_estimate_amount_out(src_addr: str, dst_addr: str, amount_in_units: int
     if not best or not best.get("price"):
         return None
     try:
-        src_dec = DECIMALS.get(ADDRESS_TO_SYMBOL.get(src_addr, ""), 18)
-        dst_dec = DECIMALS.get(ADDRESS_TO_SYMBOL.get(dst_addr, ""), 18)
+        # units -> tokens -> dst units
+        src_sym = ADDRESS_TO_SYMBOL.get(src_addr, "")
+        dst_sym = ADDRESS_TO_SYMBOL.get(dst_addr, "")
+        src_dec = DECIMALS.get(src_sym, 18)
+        dst_dec = DECIMALS.get(dst_sym, 18)
         amount_in = amount_in_units / (10 ** src_dec)
         amount_out = amount_in * float(best["price"])
         amount_out_units = int(amount_out * (10 ** dst_dec))
         if amount_out_units <= 0:
             return None
-        return {"buyAmount": str(amount_out_units), "protocols": [], "route": {"fills": []}, "source": "UniswapV3"}
+        return {"buyAmount": str(amount_out_units), "protocols": [["UniswapV3(estimation)"]],
+                "route": {"fills": []}, "source": "UniswapV3"}
     except Exception:
         return None
 
 # ===================== 1inch with Fallback =====================
-def query_1inch_price(sell_token_addr: str, buy_token_addr: str, sell_amount_units: int, symbol_pair=""):
+def query_1inch_price(sell_token_addr: str, buy_token_addr: str, sell_amount_units: int, symbol_pair: str = ""):
     """
-    Возвращает dict с "buyAmount" (строка) и meta, либо None.
+    Возвращает dict c "buyAmount" (строка) и meta, либо None.
     Каскад:
       1) v6 dev с ключом (если есть)
       2) v6 dev без ключа
       3) v5 публичный
-      4) fallback на Uniswap V3 subgraph (оценка)
-    При Invalid JSON добавляем raw в лог и идём дальше по каскаду.
+      4) fallback на Uniswap V3 subgraph (оценочно)
+    При Invalid JSON логируем raw resp.text и идём дальше.
     """
-    key = tuple(symbol_pair.split("->")) if symbol_pair else ("?", "?")
     params = {
         "src": sell_token_addr,
         "dst": buy_token_addr,
@@ -344,7 +343,6 @@ def query_1inch_price(sell_token_addr: str, buy_token_addr: str, sell_amount_uni
         "includeProtocols": "true",
         "includeGas": "false",
     }
-
     attempts = []
     headers_base = {"Accept": "application/json"}
     if ONEINCH_API_KEY:
@@ -357,7 +355,7 @@ def query_1inch_price(sell_token_addr: str, buy_token_addr: str, sell_amount_uni
     for name, url, headers in attempts:
         try:
             pace_requests()
-            resp = requests.get(url, params=params, headers=headers, timeout=12)
+            resp = requests.get(url, params=params, headers=headers, timeout=(5, 10))
         except Exception as e:
             last_err_snippet = f"HTTP error: {e}"
             if DEBUG_MODE:
@@ -378,12 +376,9 @@ def query_1inch_price(sell_token_addr: str, buy_token_addr: str, sell_amount_uni
             if not buy_amount:
                 last_err_snippet = "No buy amount in response"
                 continue
-
             try:
                 if int(buy_amount) == 0:
-                    ban_pair(key, BAN_NO_LIQUIDITY_REASON, duration=BAN_NO_LIQUIDITY_DURATION)
-                    if DEBUG_MODE:
-                        print(f"[1inch/{name}] Zero buy amount for {symbol_pair}")
+                    # явное отсутствие маршрута/ликвидности
                     return None
             except Exception:
                 pass
@@ -396,8 +391,6 @@ def query_1inch_price(sell_token_addr: str, buy_token_addr: str, sell_amount_uni
             }
 
         elif resp.status_code in (400, 404, 422):
-            # как правило, «маршрута нет» — баним коротко
-            ban_pair(key, f"{BAN_NO_LIQUIDITY_REASON} ({resp.status_code})", duration=BAN_NO_LIQUIDITY_DURATION)
             if DEBUG_MODE:
                 print(f"[1inch/{name}] {resp.status_code} for {symbol_pair}: {resp.text[:400]}")
             return None
@@ -410,20 +403,22 @@ def query_1inch_price(sell_token_addr: str, buy_token_addr: str, sell_amount_uni
                 print(f"[1inch/{name}] {last_err_snippet}")
             continue
 
-    # 1inch не дал котировку — пробуем Uniswap V3 subgraph (оценочно)
+    # 1inch не дал котировку — пробуем Uniswap V3 (оценка)
     uni_quote = univ3_estimate_amount_out(sell_token_addr, buy_token_addr, sell_amount_units)
     if uni_quote:
-        uni_quote["protocols"] = [["UniswapV3(estimation)"]]
         return uni_quote
 
-    ban_pair(key, f"1inch error: {last_err_snippet or 'No route/No quote'}", duration=BAN_OTHER_REASON_DURATION)
+    # вообще ничего — вернём None
+    if DEBUG_MODE and last_err_snippet:
+        print(f"[1inch cascade fail] {symbol_pair}: {last_err_snippet}")
     return None
 
 # ===================== Монитор сделки (поток) =====================
-def monitor_trade_thread(entry_sell_amount_units, base_addr, token_addr, base_symbol, token_symbol, timing_sec, buy_amount_token):
+def monitor_trade_thread(entry_sell_amount_units, base_addr, token_addr,
+                         base_symbol, token_symbol, timing_sec, buy_amount_token):
     """
-    Каждые 15 сек запрашиваем котировку выхода (token->base): сначала 1inch, если нет — Uniswap V3.
-    Считаем актуальный PnL и шлём сигналы 🎯/⚠️, по окончанию окна — финальное сообщение.
+    Каждые 15 сек запрашиваем котировку выхода (token->base): 1inch -> Uniswap fallback.
+    Считаем актуальный PnL и шлём 🎯/⚠️, по окончанию окна — ⏳ финальное.
     """
     check_interval = 15
     started = time.time()
@@ -444,7 +439,9 @@ def monitor_trade_thread(entry_sell_amount_units, base_addr, token_addr, base_sy
                 final_amount_exit = None
 
         if final_amount_exit:
-            _, _, actual_profit = compute_profit_percent_by_units(entry_sell_amount_units, final_amount_exit, base_symbol, token_symbol)
+            _, _, actual_profit = compute_profit_percent_by_units(
+                entry_sell_amount_units, final_amount_exit, base_symbol, token_symbol
+            )
         else:
             actual_profit = None
 
@@ -474,7 +471,8 @@ def monitor_trade_thread(entry_sell_amount_units, base_addr, token_addr, base_sy
 
         time.sleep(check_interval)
 
-def start_monitor_in_thread(entry_sell_amount_units, base_addr, token_addr, base_symbol, token_symbol, timing_sec, buy_amount_token):
+def start_monitor_in_thread(entry_sell_amount_units, base_addr, token_addr,
+                            base_symbol, token_symbol, timing_sec, buy_amount_token):
     t = threading.Thread(
         target=monitor_trade_thread,
         args=(entry_sell_amount_units, base_addr, token_addr, base_symbol, token_symbol, timing_sec, buy_amount_token),
@@ -484,18 +482,11 @@ def start_monitor_in_thread(entry_sell_amount_units, base_addr, token_addr, base
 
 # ===================== MAIN STRATEGY =====================
 def run_real_strategy():
-    """
-    Основной цикл:
-      - обходит пары,
-      - фильтрует по бан-листу/cooldown, RSI, прибыльности,
-      - отправляет pre-сообщение о сделке,
-      - запускает мониторинг в отдельном потоке,
-      - каждые REPORT_INTERVAL секунд шлёт детальный отчёт с причинами отсева.
-    """
-    global last_report_time
-    send_telegram("🤖 Bot started (1inch+UniswapV3 fallback, threaded monitor).")
-    base_tokens = ["USDT"]
+    global last_report_time, _last_cycle_report, _last_watchdog_ping
 
+    send_telegram("🤖 Bot started (1inch+UniswapV3 fallback, threaded monitor).")
+
+    base_tokens = ["USDT"]
     report_interval = int(REPORT_INTERVAL)
 
     while True:
@@ -555,7 +546,7 @@ def run_real_strategy():
                             profiler["skipped_reasons"].setdefault("RSI>70", []).append(token_symbol)
                             continue
 
-                # Котировка входа: base -> token (каскад 1inch + fallback на Uniswap)
+                # Котировка входа: base -> token
                 quote_entry = query_1inch_price(base_addr, token_addr, sell_amount_units, f"{base_symbol}->{token_symbol}")
                 if not quote_entry:
                     if TRY_REVERSE_ON_NO_ROUTE:
@@ -583,7 +574,9 @@ def run_real_strategy():
                     continue
 
                 # Оценка в USD (если есть цены), иначе — по units
-                _, _, profit_estimate_usd = compute_profit_percent_by_units(sell_amount_units, buy_amount_token, base_symbol, token_symbol)
+                _, _, profit_estimate_usd = compute_profit_percent_by_units(
+                    sell_amount_units, buy_amount_token, base_symbol, token_symbol
+                )
                 profit_estimate = profit_estimate_usd if (profit_estimate_usd is not None) else units_profit_estimate
 
                 if profit_estimate < MIN_PROFIT_PERCENT:
@@ -622,11 +615,19 @@ def run_real_strategy():
                 # Мониторинг окна удержания — в отдельном потоке
                 start_monitor_in_thread(sell_amount_units, base_addr, token_addr, base_symbol, token_symbol, timing_sec, buy_amount_token)
 
-                # Cooldown после сигнала — чтобы не спамить
+                # Cooldown после сигнала — чтобы не спамить дубликатами
                 ban_pair(key, "Post-trade cooldown", duration=BAN_OTHER_REASON_DURATION)
 
-        # ====== ОТЧЁТ КАЖДЫЕ 15 МИНУТ (детальный, всегда) ======
+        # ====== ОТЧЁТ КАЖДЫЕ REPORT_INTERVAL (детальный, всегда) ======
         now_ts = time.time()
+        if DEBUG_MODE:
+            print(f"[Loop] Checked {profiler['total_checked_pairs']} pairs at {get_local_time().strftime('%H:%M:%S')}")
+
+        # Watchdog-пинг, если отчёта не было слишком долго
+        if now_ts - last_report_time > 2 * report_interval and now_ts - _last_watchdog_ping > 60:
+            send_telegram("⚠️ No reports generated for a long time. Possibly stuck loop or upstream timeouts.")
+            _last_watchdog_ping = now_ts
+
         if now_ts - last_report_time >= report_interval:
             clean_ban_list()
 
@@ -669,6 +670,7 @@ def run_real_strategy():
 
             send_telegram("\n".join(report))
             last_report_time = now_ts
+            _last_cycle_report = now_ts
 
         time.sleep(0.5)
 
