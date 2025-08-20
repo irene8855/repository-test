@@ -14,20 +14,15 @@ import time
 import json
 import math
 import threading
-import datetime as dt
+import traceback
 from math import isfinite
 
 import requests
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:
-    pass
-
-# ===================== CONFIG =====================
-TELEGRAM_TOKEN     = os.getenv("TELEGRAM_TOKEN", "").strip()
-TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+# ===================== SECRETS / ENV =====================
+# телеграм
+TELEGRAM_TOKEN      = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # торговые параметры
 BASE_TOKENS        = os.getenv("BASE_TOKENS", "USDT").split(",")  # можно несколько базовых через запятую
@@ -44,6 +39,7 @@ DEBUG_MODE         = os.getenv("DEBUG_MODE", "True").lower() == "true"
 REQUEST_TIMEOUT    = (5, 12)  # (connect, read) seconds
 MAX_RPS            = int(os.getenv("MAX_RPS", "5"))
 REQUEST_INTERVAL   = 1 / max(1, MAX_RPS)
+GRAPH_INTERVAL    = int(os.getenv("GRAPH_INTERVAL", "300"))  # минимум секунд между запросами к The Graph (Uniswap)
 
 # опциональные ключи
 ONEINCH_API_KEY    = os.getenv("ONEINCH_API_KEY", "").strip()   # если пуст — 1inch v6 будет пропущен
@@ -52,7 +48,7 @@ GRAPH_API_KEY      = os.getenv("GRAPH_API_KEY", "").strip()     # если пу�
 # 1inch
 CHAIN_ID           = int(os.getenv("CHAIN_ID", "137"))  # Polygon
 ONEINCH_V6_URL     = f"https://api.1inch.dev/swap/v6.0/{CHAIN_ID}/quote"
-ONEINCH_V5_URL     = f"https://api.1inch.io/v5.0/{CHAIN_ID}/quote"  # публичный — часто отдаёт HTML; используем лишь как попытку
+ONEINCH_V5_URL     = f"https://api.1inch.io/v5.0/{CHAIN_ID}...e"  # публичный — часто отдаёт HTML; используем лишь как попытку
 
 # UniswapV3 graph
 UNISWAP_V3_SUBGRAPH_ID = os.getenv("UNISWAP_V3_SUBGRAPH_ID", "BvYimJ6vCLkk63oWZy7WB5cVDTVVMugUAF35RAUZpQXE")
@@ -67,16 +63,17 @@ TOKENS = {
     "USDT":   "0xc2132d05d31c914a87c6611c10748aeb04b58e8f",
     "USDC":   "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359",
     "DAI":    "0x8f3cf7ad23cd3cadbd9735aff958023239c6a063",
-    "FRAX":   "0x45c32fa6df82ead1e2ef74d17b76547eddfaff89",
-    # ликвидные/наблюдаемые
-    "wstETH": "0x03b54a6e9a984069379fae1a4fc4dbae93b3bccd",
-    "BET":    "0xbf7970d56a150cd0b60bd08388a4a75a27777777",
-    "WPOL":   "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270",
-    "tBTC":   "0x236aa50979d5f3de3bd1eeb40e81137f22ab794b",
+    "FRAX":   "0x104592a158490a9228070e0a8e5343b499e125d0",
+
+    # ликвидные и из твоего списка
+    "wstETH": "0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0",
+    "BET":    "0x1bdf71ede1a4777db1eebe7232bcda20d6fc1610",
+    "WPOL":   "0x7ceb23fd6bc0add59e62ac25578270cff1b9f619",  # wrapped POL (на самом деле WETH на PoS, но оставляю как в твоих названиях)
+    "tBTC":   "0x00e38e0875737b4665e764f0ce0e5d2c1d1723a9",
     "SAND":   "0xbbba073c31bf03b8acf7c28ef0738decf3695683",
-    "GMT":    "0x714db550b574b3e927af3d93e26127d15721d4c2",
+    "GMT":    "0xe631d4f0f1e4b4f1165f8f9a036d2b0b3f2a992b",
     "LINK":   "0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39",
-    "EMT":    "0x708383ae0e80e75377d664e4d6344404dede119a",
+    "EMT":    "0x09ee5f2b2af9cefc4a62f1dd8b0f2e1c044234df",
     "AAVE":   "0xd6df932a45c0f255f85145f286ea0b292b21c90b",
     "LDO":    "0xc3c7d422809852031b44ab29eec9f1eff2a58756",
     "POL":    "0x0000000000000000000000000000000000001010",
@@ -103,6 +100,7 @@ stats_snapshot = {
     "ban_details": {},   # copy of ban_list for report
 }
 last_report_time = 0.0
+last_graph_ts = 0.0
 
 _last_req_lock = threading.Lock()
 _last_req_ts = 0.0
@@ -118,28 +116,11 @@ def pace_requests():
 
 def now_local():
     # используем локальное время системы
-    return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return time.strftime("%Y-%m-%d %H:%M:%S")
 
-def send_telegram(text: str):
-    """Жёсткая диагностика доставки в Telegram (не молчим, если ошибка)."""
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        if DEBUG_MODE:
-            print("[TG muted]", text[:4000])
-        return
-    try:
-        r = requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": text},
-            timeout=REQUEST_TIMEOUT
-        )
-        if r.status_code != 200:
-            print("[TG ERROR]", r.status_code, r.text[:400])
-    except Exception as e:
-        print("[TG EXCEPTION]", repr(e))
-
-def add_skip(reason: str, pair_label: str):
+def add_skip(reason: str, pair: str):
     with stats_lock:
-        stats_snapshot["skipped"].setdefault(reason, []).append(pair_label)
+        stats_snapshot["skipped"].setdefault(reason, []).append(pair)
 
 def add_dex_issue(text: str):
     with stats_lock:
@@ -153,26 +134,33 @@ def inc_signal():
     with stats_lock:
         stats_snapshot["signals"] += 1
 
-def copy_ban_for_report():
+def clean_ban_list():
+    now_ts = time.time()
+    expired = []
+    for k, v in ban_list.items():
+        if now_ts - v["time"] >= v["duration"]:
+            expired.append(k)
+    for k in expired:
+        del ban_list[k]
+
+def set_ban(pair, reason, duration=60):
+    ban_list[pair] = {"time": time.time(), "reason": reason, "duration": duration}
+
+def snapshot_ban():
     with stats_lock:
         stats_snapshot["ban_details"] = dict(ban_list)
 
-def reset_cycle_stats():
-    with stats_lock:
-        stats_snapshot["checked"] = 0
-        stats_snapshot["signals"] = 0
-        stats_snapshot["skipped"] = {}
-        stats_snapshot["dex_issues"] = []
-        stats_snapshot["ban_details"] = {}
-
-def ban_pair(key, reason, duration=900):
-    ban_list[key] = {"time": time.time(), "reason": reason, "duration": duration}
-
-def clean_ban_list():
-    now = time.time()
-    for k in list(ban_list.keys()):
-        if now - ban_list[k]["time"] > ban_list[k]["duration"]:
-            ban_list.pop(k, None)
+# ===================== TELEGRAM =====================
+def send_telegram(text: str):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("TELEGRAM:", text)
+        return
+    try:
+        pace_requests()
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text}, timeout=REQUEST_TIMEOUT)
+    except Exception:
+        traceback.print_exc()
 
 # ===================== Dexscreener =====================
 def dxs_fetch(token_addr: str):
@@ -194,10 +182,7 @@ def dxs_price_usd(token_addr: str):
     for p in data.get("pairs", []):
         try:
             pu = p.get("priceUsd")
-            if not pu:
-                continue
-            price = float(pu)
-            # выбираем пару с наибольшей ликвидностью
+            price = float(pu) if pu is not None else None
             liq = float((p.get("liquidity") or {}).get("usd") or 0.0)
             if not best or liq > best[1]:
                 best = (price, liq)
@@ -216,9 +201,17 @@ def univ3_quote_amount_out(src_addr: str, dst_addr: str, amount_units: int):
     url = graph_url()
     if not url:
         return None, "Uniswap skipped (no GRAPH_API_KEY)"
-
     src = src_addr.lower()
     dst = dst_addr.lower()
+    # cooldown (экономим квоту The Graph)
+    global last_graph_ts
+    # cooldown for The Graph to save monthly quota
+    now_ts = time.time()
+    if now_ts - last_graph_ts < GRAPH_INTERVAL:
+        left = int(GRAPH_INTERVAL - (now_ts - last_graph_ts))
+        return None, f"Uniswap skipped (cooldown {left}s)"
+    # mark request time immediately (count even if fails)
+    last_graph_ts = now_ts
     q = """
     query Pools($a:String!, $b:String!){
       pools(
@@ -237,11 +230,8 @@ def univ3_quote_amount_out(src_addr: str, dst_addr: str, amount_units: int):
         pools = (data.get("data") or {}).get("pools") or []
         if not pools:
             return None, "Uniswap: no pools"
-        # оставляем пулы только ровно для пары
-        pools = [p for p in pools if {p["token0"]["id"].lower(), p["token1"]["id"].lower()} == {src, dst}]
-        if not pools:
-            return None, "Uniswap: no exact pool"
-        # берём самый ликвидный
+
+        # берём самый ликвидный пул
         def liq(x):
             try: return float(x.get("liquidity") or 0)
             except: return 0.0
@@ -274,11 +264,9 @@ def oneinch_quote_amount_out(src_addr: str, dst_addr: str, amount_units: int):
         "fromTokenAddress": src_addr, "toTokenAddress": dst_addr,
         "amount": str(amount_units),
         "disableEstimate": "true",
-        "includeTokensInfo": "false",
-        "includeProtocols": "true",
-        "includeGas": "false"
     }
-    # 1) v6 (dev) с ключом
+
+    # 1) v6 (требует ключ)
     if ONEINCH_API_KEY:
         try:
             pace_requests()
@@ -298,6 +286,7 @@ def oneinch_quote_amount_out(src_addr: str, dst_addr: str, amount_units: int):
                 return None, f"1inch v6 HTTP {r.status_code}: {r.text[:180]}"
         except Exception as e:
             return None, f"1inch v6 EXC: {repr(e)}"
+
     # 2) v5 (публичный) — может вернуть HTML → ловим и пишем как причину
     try:
         pace_requests()
@@ -328,7 +317,7 @@ def quote_amount_out(src_symbol: str, dst_symbol: str, amount_units: int):
     # 2) UniswapV3
     q, err = univ3_quote_amount_out(src_addr, dst_addr, amount_units)
     if q and q.get("buyAmount"):
-        q["source"] = "UniswapV3"
+        q["source"] = q.get("source") or "UniswapV3"
         return q, reasons
     if err: reasons.append(err)
 
@@ -358,85 +347,88 @@ def quote_amount_out(src_symbol: str, dst_symbol: str, amount_units: int):
 
 # ===================== PnL helper =====================
 def profit_pct_by_units(entry_units_base: int, exit_units_base: int) -> float:
-    try:
-        return (exit_units_base / entry_units_base - 1) * 100.0
-    except Exception:
-        return None
+    if entry_units_base <= 0: return 0.0
+    return (exit_units_base - entry_units_base) / entry_units_base * 100.0
 
-# ===================== Мониторинг сделки =====================
-def monitor_trade_thread(base_symbol, token_symbol, entry_sell_units, buy_amount_token_units, source_tag):
-    """Параллельный монитор входа: ждём до HOLD_SECONDS, следим за целью/стопом, шлём финал."""
-    start = time.time()
-    alerted_take = False
-    alerted_stop = False
+# ===================== STRATEGY LOOP =====================
+def start_monitor(base_symbol, token_symbol, entry_sell_units, buy_amount_token_units, source_tag):
+    # отдельный поток следит за окном удержания; шлёт финальное сообщение
+    def _run():
+        try:
+            t0 = time.time()
+            target = MIN_PROFIT_PERCENT
+            stop = STOP_LOSS_PERCENT
+            base_dec = DECIMALS.get(base_symbol, 6)
+            token_dec = DECIMALS.get(token_symbol, 18)
 
-    base_addr  = TOKENS[base_symbol].lower()
-    token_addr = TOKENS[token_symbol].lower()
+            # опрос цены выхода через те же источники, но в обратном направлении
+            while time.time() - t0 < HOLD_SECONDS:
+                time.sleep(5)
+                exit_quote, _ = quote_amount_out(token_symbol, base_symbol, int(buy_amount_token_units))
+                if exit_quote and exit_quote.get("buyAmount"):
+                    exit_units_base = int(exit_quote["buyAmount"])
+                    pnl = profit_pct_by_units(entry_sell_units, exit_units_base)
+                    # цель?
+                    if pnl >= target:
+                        send_telegram(
+                            f"🎯 Цель достигнута: {pnl:.2f}% по {token_symbol} (Источник: {exit_quote.get('source','?')})"
+                        )
+                        break
+                    # стоп?
+                    if pnl <= stop:
+                        send_telegram(
+                            f"🛑 Стоп-лосс: {pnl:.2f}% по {token_symbol} (Источник: {exit_quote.get('source','?')})"
+                        )
+                        break
 
-    while True:
-        elapsed = time.time() - start
-        is_final = elapsed >= HOLD_SECONDS
-
-        # котировка выхода (token -> base)
-        q_exit, _ = quote_amount_out(token_symbol, base_symbol, buy_amount_token_units)
-        exit_units = None
-        if q_exit and q_exit.get("buyAmount"):
-            try:
-                exit_units = int(q_exit["buyAmount"])
-            except Exception:
-                exit_units = None
-
-        pnl = profit_pct_by_units(entry_sell_units, exit_units) if exit_units else None
-
-        if is_final:
-            # финальное сообщение
-            if pnl is not None:
-                # абсолют в USDT — эквивалент входа
-                base_dec = DECIMALS.get(base_symbol, 6)
-                entry_tokens = entry_sell_units / (10 ** base_dec)
-                abs_usdt = entry_tokens * (pnl / 100.0)
+            # финальный пересчёт и сообщение
+            exit_quote, _ = quote_amount_out(token_symbol, base_symbol, int(buy_amount_token_units))
+            if exit_quote and exit_quote.get("buyAmount"):
+                exit_units_base = int(exit_quote["buyAmount"])
+                pnl = profit_pct_by_units(entry_sell_units, exit_units_base)
+                pnl_usd = (exit_units_base - entry_sell_units) / (10 ** base_dec)
                 send_telegram(
                     f"✅ Финальный результат\n"
                     f"PAIR: {base_symbol}->{token_symbol}->{base_symbol}\n"
-                    f"Источник: {source_tag}\n"
-                    f"PnL: {pnl:.2f}% (~{abs_usdt:.2f} {base_symbol})\n"
+                    f"Источник: {exit_quote.get('source','?')}\n"
+                    f"PnL: {pnl:.2f}% (~{pnl_usd:.2f} {base_symbol})\n"
                     f"Время: {now_local()}"
                 )
             else:
                 send_telegram(
                     f"✅ Финальный результат\n"
                     f"PAIR: {base_symbol}->{token_symbol}->{base_symbol}\n"
-                    f"Источник: {source_tag}\n"
-                    f"PnL: — (котировка выхода не получена)\n"
+                    f"Источник: н/д\n"
+                    f"PnL: н/д (нет котировки на выход)\n"
                     f"Время: {now_local()}"
                 )
-            return
+        except Exception as e:
+            send_telegram(f"❗ Monitor crashed: {repr(e)}\n{traceback.format_exc()}")
+    th = threading.Thread(target=_run, daemon=True)
+    th.start()
 
-        # промежуточные алерты (однократно)
-        if pnl is not None:
-            if (not alerted_take) and pnl >= MIN_PROFIT_PERCENT:
-                send_telegram(f"🎯 Цель достигнута: {pnl:.2f}% по {token_symbol} (Источник: {source_tag})")
-                alerted_take = True
-            if (not alerted_stop) and pnl <= STOP_LOSS_PERCENT:
-                send_telegram(f"⚠️ Стоп-лосс: {pnl:.2f}% по {token_symbol} (Источник: {source_tag})")
-                alerted_stop = True
-
-        time.sleep(20)
-
-def start_monitor(*args):
-    t = threading.Thread(target=monitor_trade_thread, args=args, daemon=True)
-    t.start()
-
-# ===================== Основной цикл =====================
 def strategy_loop():
     global last_report_time
-    reset_cycle_stats()
-    send_telegram(f"🚀 Бот запущен {now_local()}\n"
-                  f"Источники: 1inch={'ON' if ONEINCH_API_KEY else 'OFF'}, UniswapGraph={'ON' if GRAPH_API_KEY else 'OFF'}, Dexscreener=ON\n"
-                  f"Параметры: MIN_PROFIT={MIN_PROFIT_PERCENT}%, STOP_LOSS={STOP_LOSS_PERCENT}%, HOLD={HOLD_SECONDS}s, REPORT={REPORT_INTERVAL}s")
+    # приветствие
+    send_telegram("🚀 Бот запущен. Источники: 1inch (v6 при наличии ключа, v5 публичный) → UniswapV3 (Graph) → Dexscreener.")
 
     while True:
         loop_start = time.time()
+        checked_before = 0
+
+        # снимок бан-листа
+        snapshot_ban()
+        ban_det = stats_snapshot.get("ban_details", {})
+        dex_iss = []
+        skipped = {}
+        signals = 0
+        checked = 0
+
+        def add_skip_local(reason, base_sym, tok_sym):
+            key = reason
+            skipped.setdefault(key, []).append(f"{base_sym}->{tok_sym}")
+
+        # проход по базовым
         clean_ban_list()
 
         for base_symbol in BASE_TOKENS:
@@ -453,61 +445,43 @@ def strategy_loop():
                 key = (base_symbol, token_symbol)
                 inc_checked()
 
-                # бан-лист
+                # бан-лист?
                 if key in ban_list:
-                    left = int(ban_list[key]["duration"] - (time.time()-ban_list[key]["time"]))
-                    if left > 0:
-                        add_skip(f"Banned ({ban_list[key]['reason']}, left {left}s)", f"{base_symbol}->{token_symbol}")
-                        continue
-                    else:
-                        ban_list.pop(key, None)
-
-                # Получаем цену входа base->token
-                q_in, reasons = quote_amount_out(base_symbol, token_symbol, entry_sell_units)
-                if not q_in or not q_in.get("buyAmount"):
-                    add_skip("No quote", f"{base_symbol}->{token_symbol}")
-                    for rs in reasons:
-                        add_skip(f"Cause {base_symbol}->{token_symbol}", rs)
-                    # мягкий бан на короткое время, чтобы не ддосить
-                    ban_pair(key, "No quote", duration=60)
+                    left = max(0, int(ban_list[key]["duration"] - (time.time() - ban_list[key]["time"])))
+                    add_skip_local(f"Banned ({ban_list[key]['reason']}, left {left}s)", *key)
                     continue
 
-                source_tag = q_in.get("source", "unknown")
+                # котировка base -> token
                 try:
-                    buy_amount_token_units = int(q_in["buyAmount"])
-                except Exception:
-                    add_skip("Invalid buyAmount", f"{base_symbol}->{token_symbol}")
-                    ban_pair(key, "Invalid buyAmount", duration=300)
-                    continue
-                if buy_amount_token_units <= 0:
-                    add_skip("Zero buy", f"{base_symbol}->{token_symbol}")
-                    ban_pair(key, "Zero buy", duration=120)
+                    quote, reasons = quote_amount_out(base_symbol, token_symbol, entry_sell_units)
+                except Exception as e:
+                    reasons = [f"quote EXC: {repr(e)}"]
+                    quote = None
+
+                if not quote or not quote.get("buyAmount"):
+                    # отклоняем, баним на 40-60с
+                    reason = "No quote"
+                    if reasons:
+                        # укоротим список, чтобы не раздувать отчёт
+                        reason = f"Cause {base_symbol}->{token_symbol}: " + ", ".join(reasons[:10])
+                    add_skip_local(reason, base_symbol, token_symbol)
+                    set_ban(key, "No quote", duration=40 + int(20*math.sin(time.time())))
                     continue
 
-                # Выходная оценка token->base для расчёта ожидаемого PnL
-                q_out, reasons_out = quote_amount_out(token_symbol, base_symbol, buy_amount_token_units)
-                if not q_out or not q_out.get("buyAmount"):
-                    add_skip("No quote (exit)", f"{token_symbol}->{base_symbol}")
-                    for rs in reasons_out:
-                        add_skip(f"Cause {token_symbol}->{base_symbol}", rs)
-                    ban_pair(key, "No exit quote", duration=60)
-                    continue
-                try:
-                    exit_units_est = int(q_out["buyAmount"])
-                except Exception:
-                    add_skip("Invalid exit buyAmount", f"{token_symbol}->{base_symbol}")
-                    ban_pair(key, "Invalid exit buyAmount", duration=300)
+                # оценка «замкнутого» цикла base -> token -> base (грубо)
+                out_token_units = int(quote["buyAmount"])
+                back_quote, back_reasons = quote_amount_out(token_symbol, base_symbol, out_token_units)
+                if not back_quote or not back_quote.get("buyAmount"):
+                    why = " / ".join(back_reasons[:5]) if back_reasons else "No back-quote"
+                    add_skip_local(f"No back-quote: {why}", base_symbol, token_symbol)
+                    set_ban(key, "No back-quote", duration=30)
                     continue
 
-                # ожидаемый PnL
-                exp_pnl = profit_pct_by_units(entry_sell_units, exit_units_est)
-                if exp_pnl is None:
-                    add_skip("Profit calc error", f"{base_symbol}->{token_symbol}")
-                    continue
+                exit_units_base = int(back_quote["buyAmount"])
+                exp_pnl = profit_pct_by_units(entry_sell_units, exit_units_base)
 
-                # фильтр по минимальной прибыли
                 if exp_pnl < MIN_PROFIT_PERCENT:
-                    add_skip(f"Low profit < {MIN_PROFIT_PERCENT}%", f"{base_symbol}->{token_symbol} ({exp_pnl:.2f}%)")
+                    add_skip_local(f"Low profit < {MIN_PROFIT_PERCENT:.1f}%", base_symbol, token_symbol)
                     continue
 
                 # ===== Предварительное сообщение о сделке =====
@@ -515,32 +489,32 @@ def strategy_loop():
                 send_telegram(
                     f"📣 Предварительный сигнал\n"
                     f"PAIR: {base_symbol}->{token_symbol}->{base_symbol}\n"
-                    f"Источник входа: {source_tag}\n"
+                    f"Источник входа: {quote.get('source','?')}\n"
                     f"Ожидаемый PnL: {exp_pnl:.2f}%\n"
                     f"План: удержание ~{HOLD_SECONDS//60}-{(HOLD_SECONDS//60)+3} мин, цель {MIN_PROFIT_PERCENT:.2f}%, стоп {STOP_LOSS_PERCENT:.2f}%\n"
                     f"Время: {now_local()}"
                 )
 
                 # старт мониторинга (финальное сообщение будет из монитор-потока)
-                start_monitor(base_symbol, token_symbol, entry_sell_units, buy_amount_token_units, source_tag)
+                start_monitor(base_symbol, token_symbol, entry_sell_units, out_token_units, quote.get('source','?'))
 
                 # пост-охлаждение на пару, чтобы не спамить повторы
-                ban_pair(key, "Post-trade cooldown", duration=600)
+                set_ban(key, "cooldown", duration=20)
 
-        # ===== Периодический отчёт =====
+        # ========== 15-минутный отчёт ==========
         now_ts = time.time()
-        if now_ts - last_report_time >= REPORT_INTERVAL:
-            copy_ban_for_report()
+        if last_report_time == 0.0 or (now_ts - last_report_time) >= REPORT_INTERVAL:
             with stats_lock:
-                checked = stats_snapshot["checked"]
-                signals = stats_snapshot["signals"]
-                skipped = stats_snapshot["skipped"]
-                dex_iss = stats_snapshot["dex_issues"]
-                ban_det = stats_snapshot["ban_details"]
-            # формируем сообщение
+                ban_det = dict(ban_list)
+                dex_iss = list(stats_snapshot.get("dex_issues", []))
+                skipped = dict(stats_snapshot.get("skipped", {}))
+                signals = int(stats_snapshot.get("signals", 0))
+                checked = int(stats_snapshot.get("checked", 0))
+
             lines = []
             lines.append("===== PROFILER REPORT =====")
             lines.append(f"⏱ Время полного цикла: {time.time()-loop_start:.2f} сек")
+            lines.append(f"🔧 MAX_RPS={MAX_RPS}, GRAPH_INTERVAL={GRAPH_INTERVAL}s, TheGraph cooldown left={max(0, int(GRAPH_INTERVAL - (time.time()-last_graph_ts)))}s")
             lines.append(f"🚫 Пар в бан-листе: {len(ban_det)}")
             if ban_det:
                 lines.append("Бан-лист детали:")
@@ -555,16 +529,21 @@ def strategy_loop():
                     lines.append(f"  - {t}")
             if skipped:
                 lines.append("🧹 Причины отсева:")
-                # ограничим объём, но покажем основные
-                for reason, items in list(skipped.items())[:30]:
-                    # резон и до ~10 примеров для читаемости
-                    preview = ", ".join(items[:10])
-                    more = "" if len(items) <= 10 else f" (+{len(items)-10})"
-                    lines.append(f"  - {reason}: {preview}{more}")
-            lines.append("===========================")
+                # отсортируем ключи для стабильности
+                for k in sorted(skipped.keys()):
+                    vals = skipped[k]
+                    head = ", ".join(vals[:10])
+                    extra = f" (+{len(vals)-10})" if len(vals) > 10 else ""
+                    lines.append(f"  - {k}: {head}{extra}")
+
             send_telegram("\n".join(lines))
+
             # сбрасываем статистику периода
-            reset_cycle_stats()
+            with stats_lock:
+                stats_snapshot["checked"] = 0
+                stats_snapshot["signals"] = 0
+                stats_snapshot["skipped"] = {}
+                stats_snapshot["dex_issues"] = []
             last_report_time = now_ts
 
         time.sleep(0.5)
@@ -578,4 +557,4 @@ if __name__ == "__main__":
     except Exception as e:
         send_telegram(f"❗ Bot crashed: {repr(e)}")
         raise
-     
+      
