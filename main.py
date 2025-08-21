@@ -45,6 +45,7 @@ REQUEST_TIMEOUT    = (5, 12)  # (connect, read) seconds
 MAX_RPS            = int(os.getenv("MAX_RPS", "5"))
 REQUEST_INTERVAL   = 1 / max(1, MAX_RPS)
 GRAPH_INTERVAL     = int(os.getenv("GRAPH_INTERVAL", "300"))
+_last_graph_call   = 0  # глобальная переменная для контроля интервала
 
 # опциональные ключи
 ONEINCH_API_KEY    = os.getenv("ONEINCH_API_KEY", "").strip()   # если пуст — 1inch v6 будет пропущен
