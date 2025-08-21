@@ -44,8 +44,7 @@ DEBUG_MODE         = os.getenv("DEBUG_MODE", "True").lower() == "true"
 REQUEST_TIMEOUT    = (5, 12)  # (connect, read) seconds
 MAX_RPS            = int(os.getenv("MAX_RPS", "5"))
 REQUEST_INTERVAL   = 1 / max(1, MAX_RPS)
-GRAPH_INTERVAL = int(secrets.get("GRAPH_INTERVAL", 300))  # интервал опроса Uniswap (сек), по умолчанию 5 минут
-_last_graph_call = 0
+GRAPH_INTERVAL = int(os.getenv("GRAPH_INTERVAL", "300"))
 
 # опциональные ключи
 ONEINCH_API_KEY    = os.getenv("ONEINCH_API_KEY", "").strip()   # если пуст — 1inch v6 будет пропущен
