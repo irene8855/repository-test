@@ -215,6 +215,12 @@ def graph_url():
 
 def univ3_quote_amount_out(src_addr: str, dst_addr: str, amount_units: int):
     """Грубая оценка через sqrtPrice и самый ликвидный пул."""
+    global _last_graph_call
+    now = time.time()
+    if now - _last_graph_call < GRAPH_INTERVAL:
+        return None, "Uniswap skipped (graph interval)"
+    _last_graph_call = now
+
     url = graph_url()
     if not url:
         return None, "Uniswap skipped (no GRAPH_API_KEY)"
