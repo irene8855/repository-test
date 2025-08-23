@@ -594,6 +594,36 @@ def strategy_loop():
                     add_skip(f"Low profit < {MIN_PROFIT_PERCENT}%", f"{base_symbol}->{token_symbol} ({exp_pnl:.2f}%)")
                     continue
 
+# --- Dexscreener indicators & net-profit calculation ---
+try:
+    token_addr = TOKENS.get(token_symbol) if 'token_symbol' in locals() else None
+    best_ds_pair = None
+    if token_addr:
+        try:
+            ds_raw = dxs_fetch(token_addr)  # у тебя есть dxs_fetch в коде
+        except Exception:
+            ds_raw = None
+        if ds_raw and isinstance(ds_raw.get('pairs'), list) and len(ds_raw.get('pairs')) > 0:
+            best_ds_pair = max(ds_raw['pairs'], key=lambda p: ((p.get('liquidity') or {}).get('usd', 0) or 0))
+except Exception:
+    best_ds_pair = None
+
+if best_ds_pair:
+    ds_ok, ds_reason, ds_feat = evaluate_trade_signal_from_ds_pair(best_ds_pair)
+    if not ds_ok:
+        add_skip(ds_reason, f"{base_symbol}->{token_symbol}")
+        ban_pair((base_symbol, token_symbol), 'DS indicators fail', duration=60)
+        continue
+else:
+    ds_ok, ds_reason, ds_feat = False, 'No Dexscreener data', {}
+
+# compute net profit after fees/slippage
+net_profit = adjust_for_fees_pct(exp_pnl)
+if net_profit < MIN_PROFIT_PERCENT:
+    add_skip(f"Low net profit {net_profit:.2f}%", f"{base_symbol}->{token_symbol}")
+    continue
+# --- end inserted block ---
+              
                 # ===== Предварительное сообщение о сделке =====
                 inc_signal()
                 send_telegram(
