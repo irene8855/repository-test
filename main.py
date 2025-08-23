@@ -478,14 +478,23 @@ def monitor_trade_thread(base_symbol, token_symbol, entry_sell_units, buy_amount
                 # абсолют в USDT — эквивалент входа
                 base_dec = DECIMALS.get(base_symbol, 6)
                 entry_tokens = entry_sell_units / (10 ** base_dec)
-                abs_usdt = entry_tokens * (pnl / 100.0)
-                send_telegram(
-                    f"✅ Финальный результат\n"
-                    f"PAIR: {base_symbol}->{token_symbol}->{base_symbol}\n"
-                    f"Источник: {source_tag}\n"
-                    f"PnL: {pnl:.2f}% (~{abs_usdt:.2f} {base_symbol})\n"
-                    f"Время: {now_local()}"
-                )
+                abs_usdt = entry_tokens * (pnl / 100.0) if pnl is not None else 0.0
+                final_net = adjust_for_fees_pct(pnl) if (pnl is not None) else None
+
+                msg_lines = [
+                    "✅ Финальный результат",
+                    f"PAIR: {base_symbol}->{token_symbol}->{base_symbol}",
+                    f"Источник: {source_tag}"
+                ]
+                if pnl is not None:
+                    msg_lines.append(f"PnL (raw): {pnl:.2f}% (~{abs_usdt:.2f} {base_symbol})")
+                    if final_net is not None:
+                        msg_lines.append(f"PnL (net): {final_net:.2f}%")
+                else:
+                    msg_lines.append("PnL: — (котировка выхода не получена)")
+
+                msg_lines.append(f"Время: {now_local()}")
+                send_telegram("\n".join(msg_lines))
             else:
                 send_telegram(
                     f"✅ Финальный результат\n"
