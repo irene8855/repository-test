@@ -630,7 +630,12 @@ if net_profit < MIN_PROFIT_PERCENT:
                     f"📣 Предварительный сигнал\n"
                     f"PAIR: {base_symbol}->{token_symbol}->{base_symbol}\n"
                     f"Источник входа: {source_tag}\n"
-                    f"Ожидаемый PnL: {exp_pnl:.2f}%\n"
+                    f"Ожидаемый PnL (raw): {exp_pnl:.2f}%\n"
+                    f"Ожидаемый PnL (net): {net_profit:.2f}%\n"
+                    f"Ликвидность (DS): ${ds_feat.get('liquidity_usd',0):,.0f}\n"
+                    f"OrderFlow m5: buys={int(ds_feat.get('buys',0))}, sells={int(ds_feat.get('sells',0))}\n"
+                    f"Volume m5: {ds_feat.get('vol_m5',0):.0f} vs avg5: {ds_feat.get('avg_m5',0):.0f}\n"
+                    f"Momentum m5: {ds_feat.get('momentum_m5',0.0):.2f}%\n"
                     f"План: удержание ~{HOLD_SECONDS//60}-{(HOLD_SECONDS//60)+3} мин, цель {MIN_PROFIT_PERCENT:.2f}%, стоп {STOP_LOSS_PERCENT:.2f}%\n"
                     f"Время: {now_local()}"
                 )
