@@ -507,11 +507,20 @@ def monitor_trade_thread(base_symbol, token_symbol, entry_sell_units, buy_amount
 
         # промежуточные алерты (однократно)
         if pnl is not None:
+            final_net = adjust_for_fees_pct(pnl)
+
             if (not alerted_take) and pnl >= MIN_PROFIT_PERCENT:
-                send_telegram(f"🎯 Цель достигнута: {pnl:.2f}% по {token_symbol} (Источник: {source_tag})")
+                if final_net is not None:
+                    send_telegram(f"🎯 Цель достигнута: {pnl:.2f}% (net {final_net:.2f}%) по {token_symbol} (Источник: {source_tag})")
+                else:
+                    send_telegram(f"🎯 Цель достигнута: {pnl:.2f}% по {token_symbol} (Источник: {source_tag})")
                 alerted_take = True
+
             if (not alerted_stop) and pnl <= STOP_LOSS_PERCENT:
-                send_telegram(f"⚠️ Стоп-лосс: {pnl:.2f}% по {token_symbol} (Источник: {source_tag})")
+                if final_net is not None:
+                    send_telegram(f"⚠️ Стоп-лосс: {pnl:.2f}% (net {final_net:.2f}%) по {token_symbol} (Источник: {source_tag})")
+                else:
+                    send_telegram(f"⚠️ Стоп-лосс: {pnl:.2f}% по {token_symbol} (Источник: {source_tag})")
                 alerted_stop = True
 
         time.sleep(20)
