@@ -221,6 +221,74 @@ def graph_url():
         return None
     return f"{GRAPH_GATEWAY_BASE}/{GRAPH_API_KEY}/subgraphs/id/{UNISWAP_V3_SUBGRAPH_ID}"
 
+def _safe_get(d: dict, path: str, default=None):
+    cur = d or {}
+    for p in path.split('.'):
+        if not isinstance(cur, dict):
+            return default
+        cur = cur.get(p)
+        if cur is None:
+            return default
+    return cur
+
+def evaluate_trade_signal_from_ds_pair(pair: dict):
+    """
+    Проверяет OrderFlow (m5), Volume Spike (m5 vs avg5), Momentum (m5) и Liquidity.
+    Возвращает (ok: bool, reason: str, features: dict)
+    """
+    try:
+        buys = int(_safe_get(pair, "txns.m5.buys", 0) or 0)
+        sells = int(_safe_get(pair, "txns.m5.sells", 0) or 0)
+        vol_m5 = float(_safe_get(pair, "volume.m5", 0.0) or 0.0)
+        vol_h1 = float(_safe_get(pair, "volume.h1", 0.0) or 0.0)
+        if vol_h1 <= 0:
+            vol_h1 = 1.0
+        avg_m5 = vol_h1 / 12.0
+        momentum_m5 = float(_safe_get(pair, "priceChange.m5", 0.0) or 0.0)
+        liquidity_usd = float(_safe_get(pair, "liquidity.usd", 0.0) or 0.0)
+
+        if liquidity_usd < MIN_LIQ_USD:
+            return False, f"Low liquidity: ${liquidity_usd:,.0f} < ${MIN_LIQ_USD:,.0f}", {
+                "liquidity_usd": liquidity_usd, "buys": buys, "sells": sells,
+                "vol_m5": vol_m5, "avg_m5": avg_m5, "momentum_m5": momentum_m5
+            }
+
+        ratio = buys / max(1, sells)
+        if ratio < ORDERFLOW_RATIO:
+            return False, f"Weak orderflow: buys={buys}, sells={sells}, ratio={ratio:.2f} < {ORDERFLOW_RATIO}", {
+                "liquidity_usd": liquidity_usd, "buys": buys, "sells": sells,
+                "vol_m5": vol_m5, "avg_m5": avg_m5, "momentum_m5": momentum_m5
+            }
+
+        if vol_m5 < avg_m5 * VOLUME_SPIKE_RATIO:
+            return False, f"No volume spike: m5={vol_m5:.0f}, avg5={avg_m5:.0f}, need×{VOLUME_SPIKE_RATIO}", {
+                "liquidity_usd": liquidity_usd, "buys": buys, "sells": sells,
+                "vol_m5": vol_m5, "avg_m5": avg_m5, "momentum_m5": momentum_m5
+            }
+
+        if momentum_m5 < MOMENTUM_THRESHOLD:
+            return False, f"Weak momentum: {momentum_m5:.2f}% < {MOMENTUM_THRESHOLD}%", {
+                "liquidity_usd": liquidity_usd, "buys": buys, "sells": sells,
+                "vol_m5": vol_m5, "avg_m5": avg_m5, "momentum_m5": momentum_m5
+            }
+
+        return True, "Signal OK", {
+            "liquidity_usd": liquidity_usd, "buys": buys, "sells": sells,
+            "vol_m5": vol_m5, "avg_m5": avg_m5, "momentum_m5": momentum_m5
+        }
+    except Exception as e:
+        return False, f"Signal error: {e}", {}
+
+def adjust_for_fees_pct(raw_profit_pct: float) -> float:
+    """
+    На входе — проценты (например 1.23 -> +1.23% raw).
+    DEX_FEE и SLIPPAGE заданы в долях (0.003 = 0.3%).
+    Возвращает чистую прибыль в процентах после вычетов.
+    """
+    fees_pct = (DEX_FEE * 2.0) * 100.0   # вход+выход (в процентах)
+    slip_pct = SLIPPAGE * 100.0
+    return raw_profit_pct - fees_pct - slip_pct
+
 def univ3_quote_amount_out(src_addr: str, dst_addr: str, amount_units: int):
     """Грубая оценка через sqrtPrice и самый ликвидный пул."""
     global _last_graph_call
