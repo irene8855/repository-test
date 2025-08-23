@@ -48,10 +48,10 @@ GRAPH_INTERVAL     = int(os.getenv("GRAPH_INTERVAL", "300"))
 _last_graph_call   = 0  # глобальная переменная для контроля интервала
 
 # === realistic trade settings ===
-DEX_FEE = float(os.getenv("DEX_FEE", "0.003"))        # комиссия пула в долях (0.003 = 0.3%)
-SLIPPAGE = float(os.getenv("SLIPPAGE", "0.002"))      # допущение проскальзывания (0.002 = 0.2%)
-MIN_LIQ_USD = float(os.getenv("MIN_LIQ_USD", "50000"))  # минимальная ликвидность пары в $
-ORDERFLOW_RATIO = float(os.getenv("ORDERFLOW_RATIO", "1.5"))
+DEX_FEE            = float(os.getenv("DEX_FEE", "0.003"))        # комиссия пула в долях (0.003 = 0.3%)
+SLIPPAGE           = float(os.getenv("SLIPPAGE", "0.002"))      # допущение проскальзывания (0.002 = 0.2%)
+MIN_LIQ_USD        = float(os.getenv("MIN_LIQ_USD", "50000"))  # минимальная ликвидность пары в $
+ORDERFLOW_RATIO    = float(os.getenv("ORDERFLOW_RATIO", "1.5"))
 VOLUME_SPIKE_RATIO = float(os.getenv("VOLUME_SPIKE_RATIO", "2.0"))
 MOMENTUM_THRESHOLD = float(os.getenv("MOMENTUM_THRESHOLD", "0.5"))
 
