@@ -65,7 +65,8 @@ ONEINCH_V6_URL     = f"https://api.1inch.dev/swap/v6.0/{CHAIN_ID}/quote"
 ONEINCH_V5_URL     = f"https://api.1inch.io/v5.0/{CHAIN_ID}/quote"  # публичный — часто отдаёт HTML; используем лишь как попытку
 
 # UniswapV3 graph
-UNISWAP_V3_SUBGRAPH_ID = os.getenv("UNISWAP_V3_SUBGRAPH_ID", "BvYimJ6vCLkk63oWZy7WB5cVDTVVMugUAF35RAUZpQXE")
+UNISWAP_V3_SUBGRAPH_ID = os.getenv("UNISWAP_V3_SUBGRAPH_ID")
+SUSHI_SUBGRAPH_ID      = os.getenv("SUSHI_SUBGRAPH_ID")
 GRAPH_GATEWAY_BASE     = "https://gateway.thegraph.com/api"
 
 # Dexscreener
@@ -409,12 +410,21 @@ def quote_amount_out(src_symbol: str, dst_symbol: str, amount_units: int):
         return q, reasons
     if err: reasons.append(err)
 
-    # 2) UniswapV3
-    q, err = univ3_quote_amount_out(src_addr, dst_addr, amount_units)
+        # 2) UniswapV3 (с fallback на Sushi)
+    q, err = univ3_quote_amount_out(src_addr, dst_addr, amount_units, source="uniswap")
     if q and q.get("buyAmount"):
         q["source"] = "UniswapV3"
         return q, reasons
-    if err: reasons.append(err)
+    if err:
+        reasons.append(err)
+
+    # 2b) SushiSwap (если Uniswap не дал данных)
+    q, err = univ3_quote_amount_out(src_addr, dst_addr, amount_units, source="sushi")
+    if q and q.get("buyAmount"):
+        q["source"] = "SushiSwap"
+        return q, reasons
+    if err:
+        reasons.append(err)
 
     # 3) Dexscreener (грубая оценка через USD-цены)
     try:
