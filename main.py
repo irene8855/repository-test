@@ -351,6 +351,71 @@ def univ3_quote_amount_out(src_addr: str, dst_addr: str, amount_units: int):
     except Exception as e:
         return None, f"Uniswap EXC: {repr(e)}"
 
+# ===================== SushiSwap v3 (Graph) =====================
+def sushi_graph_url():
+    # Требуются GRAPH_API_KEY и SUSHI_SUBGRAPH_ID в переменных окружения
+    if not GRAPH_API_KEY or not SUSHI_SUBGRAPH_ID:
+        return None
+    return f"{GRAPH_GATEWAY_BASE}/{GRAPH_API_KEY}/subgraphs/id/{SUSHI_SUBGRAPH_ID}"
+
+def sushi_quote_amount_out(src_addr: str, dst_addr: str, amount_units: int):
+    """Грубая оценка для Sushi v3 по sqrtPrice самого ликвидного пула."""
+    url = sushi_graph_url()
+    if not url:
+        return None, "Sushi skipped (no GRAPH_API_KEY or SUSHI_SUBGRAPH_ID)"
+
+    src = src_addr.lower()
+    dst = dst_addr.lower()
+    q = """
+    query Pools($a:String!, $b:String!){
+      pools(
+        where:{ token0_in:[$a,$b], token1_in:[$a,$b], feeTier_in:[500,3000,10000] }
+        first: 20, orderBy: liquidity, orderDirection: desc
+      ){
+        id feeTier liquidity sqrtPrice token0{ id decimals } token1{ id decimals }
+      }
+    }"""
+    try:
+        pace_requests()
+        resp = requests.post(url, json={"query": q, "variables":{"a":src,"b":dst}}, timeout=REQUEST_TIMEOUT)
+        if resp.status_code != 200:
+            return None, f"Sushi HTTP {resp.status_code}: {resp.text[:200]}"
+        data = resp.json()
+        pools = (data.get("data") or {}).get("pools") or []
+        if not pools:
+            return None, "Sushi: no pools"
+
+        # берём именно нашу пару и самый ликвидный пул
+        pools = [p for p in pools if {p["token0"]["id"].lower(), p["token1"]["id"].lower()} == {src, dst}]
+        if not pools:
+            return None, "Sushi: no exact pool"
+
+        def liq(x):
+            try: return float(x.get("liquidity") or 0)
+            except: return 0.0
+        pool = sorted(pools, key=liq, reverse=True)[0]
+
+        t0, t1 = pool["token0"], pool["token1"]
+        dec0, dec1 = int(t0["decimals"]), int(t1["decimals"])
+        sqrtP = int(pool["sqrtPrice"]); Q96 = 2**96
+        price1_per_0 = (sqrtP / Q96) ** 2 * (10 ** (dec0 - dec1))
+        if not isfinite(price1_per_0) or price1_per_0 <= 0:
+            return None, "Sushi: bad sqrtP"
+
+        fee = int(pool["feeTier"]) / 1_000_000
+        if src == t0["id"].lower() and dst == t1["id"].lower():
+            out_units = int(amount_units * price1_per_0 * (1 - fee))
+        elif src == t1["id"].lower() and dst == t0["id"].lower():
+            out_units = int(amount_units * (1/price1_per_0) * (1 - fee))
+        else:
+            return None, "Sushi: dir mismatch"
+
+        if out_units <= 0:
+            return None, "Sushi: zero out"
+        return {"buyAmount": str(out_units), "source": "SushiSwap"}, None
+    except Exception as e:
+        return None, f"Sushi EXC: {repr(e)}"
+
 # ===================== 1inch =====================
 def oneinch_quote_amount_out(src_addr: str, dst_addr: str, amount_units: int):
     params = {
@@ -410,8 +475,8 @@ def quote_amount_out(src_symbol: str, dst_symbol: str, amount_units: int):
         return q, reasons
     if err: reasons.append(err)
 
-        # 2) UniswapV3 (с fallback на Sushi)
-    q, err = univ3_quote_amount_out(src_addr, dst_addr, amount_units, source="uniswap")
+    # 2) UniswapV3
+    q, err = univ3_quote_amount_out(src_addr, dst_addr, amount_units)
     if q and q.get("buyAmount"):
         q["source"] = "UniswapV3"
         return q, reasons
@@ -419,13 +484,13 @@ def quote_amount_out(src_symbol: str, dst_symbol: str, amount_units: int):
         reasons.append(err)
 
     # 2b) SushiSwap (если Uniswap не дал данных)
-    q, err = univ3_quote_amount_out(src_addr, dst_addr, amount_units, source="sushi")
+    q, err = sushi_quote_amount_out(src_addr, dst_addr, amount_units)
     if q and q.get("buyAmount"):
         q["source"] = "SushiSwap"
         return q, reasons
     if err:
         reasons.append(err)
-
+      
     # 3) Dexscreener (грубая оценка через USD-цены)
     try:
         src_dec = DECIMALS.get(src_symbol, 18)
