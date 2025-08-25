@@ -237,6 +237,46 @@ def _safe_get(d: dict, path: str, default=None):
             return default
     return cur
 
+def ensure_pair_buffers(key):
+    if key not in PAIR_BUFFERS:
+        PAIR_BUFFERS[key] = {
+            "price": deque(maxlen=BUFFER_LEN),
+            "vol": deque(maxlen=BUFFER_LEN),
+            "buys": deque(maxlen=BUFFER_LEN),
+            "sells": deque(maxlen=BUFFER_LEN),
+            "ts": deque(maxlen=BUFFER_LEN)
+        }
+
+def push_pair_snapshot(key, price, vol, buys, sells, ts=None):
+    ensure_pair_buffers(key)
+    b = PAIR_BUFFERS[key]
+    b["price"].append(price)
+    b["vol"].append(vol)
+    b["buys"].append(buys)
+    b["sells"].append(sells)
+    b["ts"].append(ts or time.time())
+
+def compute_derivatives(key):
+    """Возвращает dict: d_price, dd_price (ускорение), d_vol, d_buys, vol_rel_change"""
+    if key not in PAIR_BUFFERS:
+        return {}
+    b = PAIR_BUFFERS[key]
+    res = {}
+    try:
+        if len(b["price"]) >= 2:
+            res["d_price"] = b["price"][-1] - b["price"][-2]
+        if len(b["price"]) >= 3:
+            res["dd_price"] = b["price"][-1] - 2*b["price"][-2] + b["price"][-3]
+        if len(b["vol"]) >= 2:
+            res["d_vol"] = b["vol"][-1] - b["vol"][-2]
+        if len(b["buys"]) >= 2:
+            res["d_buys"] = b["buys"][-1] - b["buys"][-2]
+        if len(b["vol"]) > 0:
+            res["vol_rel_change"] = b["vol"][-1] / (sum(b["vol"]) / len(b["vol"]) + 1e-9)
+    except Exception:
+        pass
+    return res
+
 def evaluate_trade_signal_from_ds_pair(pair: dict):
     """
     Проверяет OrderFlow (m5), Volume Spike (m5 vs avg5), Momentum (m5) и Liquidity.
