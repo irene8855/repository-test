@@ -567,6 +567,20 @@ def profit_pct_by_units(entry_units_base: int, exit_units_base: int) -> float:
     except Exception:
         return None
 
+def compute_consensus(src_results: list):
+    """
+    src_results: список словарей с ключами:
+      {"source": "1inch/uniswap/dexscreener/sushi", "momentum": ..., "liquidity": ...}
+    Возвращает число источников, где momentum >= MOMENTUM_THRESHOLD и liquidity >= MIN_LIQ_USD*0.5
+    """
+    count = 0
+    for r in src_results:
+        mom = float(r.get("momentum", 0.0))
+        liq = float(r.get("liquidity", 0.0))
+        if mom >= MOMENTUM_THRESHOLD and liq >= (MIN_LIQ_USD * 0.5):
+            count += 1
+    return count
+
 # ===================== Мониторинг сделки =====================
 def monitor_trade_thread(base_symbol, token_symbol, entry_sell_units, buy_amount_token_units, source_tag):
     """Параллельный монитор входа: ждём до HOLD_SECONDS, следим за целью/стопом, шлём финал."""
