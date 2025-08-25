@@ -667,6 +667,99 @@ def start_monitor(*args):
     t = threading.Thread(target=monitor_trade_thread, args=args, daemon=True)
     t.start()
 
+# --- Логирование сигналов (SQLite + CSV fallback) ---
+import json
+import threading
+
+LOG_DB_PATH = os.getenv("LOG_DB_PATH", "signals.db")
+LOG_CSV_PATH = os.getenv("LOG_CSV_PATH", "signals.csv")
+_write_queue = queue.Queue(maxsize=10000)
+_db_conn = None
+_writer_thread = None
+
+def init_logging_db():
+    global _db_conn
+    _db_conn = sqlite3.connect(LOG_DB_PATH, check_same_thread=False)
+    cur = _db_conn.cursor()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS signals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT,
+        base TEXT,
+        token TEXT,
+        source TEXT,
+        exp_pnl REAL,
+        net_pnl REAL,
+        predicted_prob REAL,
+        features_json TEXT,
+        entry_sell_units INTEGER,
+        buy_amount_token_units INTEGER,
+        exit_units_est INTEGER,
+        outcome INTEGER,   -- 1 win, 0 lose, -1 pending
+        pnl_real REAL,
+        hold_seconds INTEGER
+    )
+    """)
+    _db_conn.commit()
+
+def writer_worker():
+    global _db_conn
+    cur = _db_conn.cursor()
+    while True:
+        item = _write_queue.get()
+        if item is None:
+            break
+        try:
+            cur.execute("""
+            INSERT INTO signals
+            (ts, base, token, source, exp_pnl, net_pnl, predicted_prob, features_json,
+             entry_sell_units, buy_amount_token_units, exit_units_est, outcome, pnl_real, hold_seconds)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (
+                item.get("ts"), item.get("base"), item.get("token"), item.get("source"),
+                item.get("exp_pnl"), item.get("net_pnl"), item.get("predicted_prob"),
+                json.dumps(item.get("features") or {}, ensure_ascii=False),
+                item.get("entry_sell_units"), item.get("buy_amount_token_units"), item.get("exit_units_est"),
+                item.get("outcome", -1), item.get("pnl_real"), item.get("hold_seconds")
+            ))
+            _db_conn.commit()
+        except Exception as e:
+            try:
+                with open(LOG_CSV_PATH, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(item, ensure_ascii=False) + "\n")
+            except Exception:
+                print("[LOGGING ERROR]", repr(e))
+        _write_queue.task_done()
+
+def start_writer():
+    global _writer_thread
+    init_logging_db()
+    _writer_thread = threading.Thread(target=writer_worker, daemon=True)
+    _writer_thread.start()
+    atexit.register(stop_writer)
+
+def stop_writer():
+    try:
+        _write_queue.put_nowait(None)
+    except Exception:
+        pass
+    try:
+        if _writer_thread:
+            _writer_thread.join(timeout=2)
+    except Exception:
+        pass
+    try:
+        if _db_conn:
+            _db_conn.close()
+    except Exception:
+        pass
+
+def enqueue_signal_record(record: dict):
+    try:
+        _write_queue.put_nowait(record)
+    except queue.Full:
+        print("[LOG QUEUE FULL] Dropping record")
+
 # ===================== Основной цикл =====================
 def strategy_loop():
     global last_report_time
