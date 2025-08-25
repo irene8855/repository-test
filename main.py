@@ -18,7 +18,11 @@ import datetime as dt
 from math import isfinite
 
 import requests
-import sqlite3, queue, atexit, joblib
+import sqlite3
+import queue
+import atexit
+import joblib  # для ML-модели (LightGBM / XGBoost)
+from collections import deque  # для ring-buffers
 
 try:
     from dotenv import load_dotenv
