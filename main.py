@@ -177,6 +177,10 @@ def reset_cycle_stats():
         stats_snapshot["dex_issues"] = []
         stats_snapshot["ban_details"] = {}
 
+from collections import deque
+PAIR_BUFFERS = {}  # key -> {"price": deque(), "vol": deque(), "buys": deque(), "sells": deque(), "ts": deque()}
+BUFFER_LEN = 12  # храним последние 12 значений (пример — 12*5min = 60min, но у тебя m5)
+
 def ban_pair(key, reason, duration=900):
     ban_list[key] = {"time": time.time(), "reason": reason, "duration": duration}
 
