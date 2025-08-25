@@ -760,6 +760,30 @@ def enqueue_signal_record(record: dict):
     except queue.Full:
         print("[LOG QUEUE FULL] Dropping record")
 
+MODEL_PATH = os.getenv("MODEL_PATH", "model_lgb.pkl")
+_model = None
+
+def load_model():
+    global _model
+    try:
+        _model = joblib.load(MODEL_PATH)
+        print(f"[MODEL] loaded {MODEL_PATH}")
+    except Exception as e:
+        _model = None
+        print("[MODEL] not loaded:", e)
+
+def model_predict_proba(feature_dict):
+    if _model is None:
+        return None
+    import pandas as pd
+    try:
+        X = pd.DataFrame([feature_dict])
+        proba = _model.predict(X)[0]  # LightGBM binary objective
+        return float(proba)
+    except Exception as e:
+        print("[MODEL PRED ERROR]", e)
+        return None
+
 # ===================== Основной цикл =====================
 def strategy_loop():
     global last_report_time
