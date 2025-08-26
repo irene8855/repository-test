@@ -2,3 +2,7 @@ web3==6.10.0
 python-dotenv
 pytz
 requests
+joblib
+pandas
+scikit-learn
+lightgbm
