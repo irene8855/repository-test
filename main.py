@@ -963,6 +963,12 @@ def strategy_loop():
 
 # ===================== ENTRY =====================
 if __name__ == "__main__":
+    # --- ML: загрузить модель заранее ---
+    load_model()   # <-- ВСТАВИТЬ ЭТУ СТРОКУ ЗДЕСЬ (перед стартом основной петли)
+
+    # запуск writer (если вы используете логирование)
+    start_writer()
+
     try:
         strategy_loop()
     except KeyboardInterrupt:
