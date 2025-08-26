@@ -896,6 +896,56 @@ def strategy_loop():
                     add_skip(f"Low net profit {net_profit:.2f}%", f"{base_symbol}->{token_symbol}")
                     continue
                 # --- end inserted block ---
+
+                # ----------------- ML filter (insert here) -----------------
+                # Собираем словарь признаков в том же формате, что использовали при обучении
+                try:
+                    feat = {
+                        "exp_pnl": float(exp_pnl or 0.0),
+                        "net_pnl": float(net_profit or 0.0),
+                        "entry_sell_units": int(entry_sell_units or 0),
+                        "buy_amount_token_units": int(buy_amount_token_units or 0),
+                        "exit_units_est": int(exit_units_est or 0),
+                        "hold_seconds": int(HOLD_SECONDS or 0),
+                        # доп. признаки из ds_feat (если есть)
+                        "liquidity_usd": float(ds_feat.get("liquidity_usd", 0.0)),
+                        "buys": float(ds_feat.get("buys", 0.0)),
+                        "sells": float(ds_feat.get("sells", 0.0)),
+                        "vol_m5": float(ds_feat.get("vol_m5", 0.0)),
+                        "avg_m5": float(ds_feat.get("avg_m5", 0.0)),
+                        "momentum_m5": float(ds_feat.get("momentum_m5", 0.0)),
+                    }
+                    # возможно, некоторые производные признаки тоже есть в ds_feat
+                    for k in ("d_price","dd_price","d_vol","d_buys","vol_rel_change"):
+                        if k in ds_feat:
+                            feat[k] = float(ds_feat.get(k) or 0.0)
+                except Exception:
+                    feat = {}
+
+                # порог вероятности — можно переопределить через env (default 0.5)
+                ALERT_PROB_THRESHOLD = float(os.getenv("ALERT_PROB_THRESHOLD", "0.5"))
+
+                # если модель загружена — используем её
+                try:
+                    prob = model_predict_proba(feat)
+                    if prob is None:
+                        # модель не загружена или ошибка — позволяем сигнал (поведение по умолчанию)
+                        pass
+                    else:
+                        # если вероятность мала — пропускаем сигнал
+                        if float(prob) < ALERT_PROB_THRESHOLD:
+                            add_skip(f"ML filter (prob {prob:.3f} < {ALERT_PROB_THRESHOLD})", f"{base_symbol}->{token_symbol}")
+                            ban_pair(key, "ML filtered", duration=120)
+                            continue
+                        else:
+                            # можно добавить лог или метрику
+                            if DEBUG_MODE:
+                                print(f"[ML] pass {base_symbol}->{token_symbol} prob={prob:.3f}")
+                except Exception as e:
+                    # не ломаем основной цикл из-за проблем с ML
+                    if DEBUG_MODE:
+                        print("[ML ERROR]", repr(e))
+                # ----------------- end ML filter -----------------
               
                 # ===== Предварительное сообщение о сделке =====
                 inc_signal()
