@@ -67,4 +67,7 @@ def get_quote_web3(src_symbol, dst_symbol, amount_units):
 
 if __name__ == "__main__":
     print("Connected:", w3.is_connected())
-    print("Block number:", w3.eth.block_number)
+    try:
+        print("Block number:", w3.eth.block_number)
+    except Exception as e:
+        print("Error fetching block:", e)
