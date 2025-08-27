@@ -4,6 +4,7 @@ from web3 import Web3
 from dotenv import load_dotenv
 
 load_dotenv()
+print("DEBUG ALCHEMY_RPC:", os.getenv("ALCHEMY_POLYGON_RPC"))
 
 # RPC через Alchemy (Polygon)
 ALCHEMY_RPC = os.getenv("ALCHEMY_POLYGON_RPC")
