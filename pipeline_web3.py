@@ -8,6 +8,8 @@ load_dotenv()
 # RPC через Alchemy (Polygon)
 ALCHEMY_RPC = os.getenv("ALCHEMY_POLYGON_RPC")
 w3 = Web3(Web3.HTTPProvider(ALCHEMY_RPC))
+from web3.middleware import geth_poa_middleware
+w3.middleware_onion.inject(geth_poa_middleware, layer=0)
 
 # Пример: пул USDT–MATIC на QuickSwap (Polygon)
 PAIR_ADDRESS = Web3.to_checksum_address("0x4d6b2b90fdb1c68b9b37c58d93d6309d63f03bc0")
@@ -61,3 +63,7 @@ def get_quote_web3(src_symbol, dst_symbol, amount_units):
     except Exception as e:
         print("Web3 error:", e)
         return None
+
+if __name__ == "__main__":
+    print("Connected:", w3.is_connected())
+    print("Block number:", w3.eth.block_number)
