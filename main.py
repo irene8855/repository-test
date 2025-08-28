@@ -542,7 +542,17 @@ def quote_amount_out(src_symbol: str, dst_symbol: str, amount_units: int):
         return q, reasons
     if err:
         reasons.append(err)
-      
+
+    # Web3 (если включен флаг USE_WEB3)
+    if USE_WEB3:
+        try:
+            q = get_quote_web3(src_symbol, dst_symbol, amount_units)
+            if q:
+                q["source"] = "Web3"
+                return q, reasons
+        except Exception as e:
+            reasons.append(f"Web3 error: {e}")
+  
     # 3) Dexscreener (грубая оценка через USD-цены)
     try:
         src_dec = DECIMALS.get(src_symbol, 18)
@@ -566,16 +576,6 @@ def quote_amount_out(src_symbol: str, dst_symbol: str, amount_units: int):
     except Exception as e:
         reasons.append(f"Dexscreener EXC: {repr(e)}")
         return None, reasons
-
-    # Web3 (если включен флаг USE_WEB3)
-    if USE_WEB3:
-        try:
-            q = get_quote_web3(src_symbol, dst_symbol, amount_units)
-            if q:
-                q["source"] = "Web3"
-                return q, reasons
-        except Exception as e:
-            reasons.append(f"Web3 error: {e}")
 
 # ===================== PnL helper =====================
 def profit_pct_by_units(entry_units_base: int, exit_units_base: int) -> float:
