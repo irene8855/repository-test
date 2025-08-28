@@ -9,6 +9,7 @@ dockerfile = "Dockerfile"
 # TELEGRAM_TOKEN = "your_telegram_token"
 # TELEGRAM_CHAT_ID = "your_chat_id"
 # DEBUG_MODE = "True"
+# USE_WEB3 = "true"
 
 [processes]
 app = "python3 main.py"
