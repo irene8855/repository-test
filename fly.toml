@@ -10,6 +10,7 @@ dockerfile = "Dockerfile"
 # TELEGRAM_CHAT_ID = "your_chat_id"
 # DEBUG_MODE = "True"
 # USE_WEB3 = "true"
+MIN_LIQ_USD = "5000"
 
 [processes]
 app = "python3 main.py"
