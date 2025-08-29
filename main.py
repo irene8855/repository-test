@@ -98,7 +98,7 @@ TOKENS = {
     "EMT":    "0x708383ae0e80e75377d664e4d6344404dede119a",
     "AAVE":   "0xd6df932a45c0f255f85145f286ea0b292b21c90b",
     "LDO":    "0xc3c7d422809852031b44ab29eec9f1eff2a58756",
-    "POL":    "0x0000000000000000000000000000000000001010",
+    "POL":    "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270",  # WMATIC (wrapped POL)
     "WETH":   "0x7ceb23fd6bc0add59e62ac25578270cff1b9f619",
     "SUSHI":  "0x0b3f868e0be5597d5db7feb59e1cadbb0fdda50a",
 }
