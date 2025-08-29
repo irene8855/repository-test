@@ -550,6 +550,8 @@ def quote_amount_out(src_symbol: str, dst_symbol: str, amount_units: int):
             if q:
                 q["source"] = "Web3"
                 return q, reasons
+            else:
+                reasons.append("Web3: no quote")
         except Exception as e:
             reasons.append(f"Web3 error: {e}")
   
