@@ -1,69 +1,77 @@
 # pipeline_web3.py
 import os
 from web3 import Web3
-from dotenv import load_dotenv
-
-load_dotenv()
-print("DEBUG ALCHEMY_RPC:", os.getenv("ALCHEMY_POLYGON_RPC"))
-
-# RPC через Alchemy (Polygon)
-ALCHEMY_RPC = os.getenv("ALCHEMY_POLYGON_RPC")
-w3 = Web3(Web3.HTTPProvider(ALCHEMY_RPC))
 from web3.middleware import geth_poa_middleware
+
+# 1) RPC из секретов (ALCHEMY_POLYGON_RPC)
+ALCHEMY_RPC = os.getenv("ALCHEMY_POLYGON_RPC")
+if not ALCHEMY_RPC:
+    raise RuntimeError("ALCHEMY_POLYGON_RPC is not set")
+
+w3 = Web3(Web3.HTTPProvider(ALCHEMY_RPC))
 w3.middleware_onion.inject(geth_poa_middleware, layer=0)
 
-# Пример: пул USDT–MATIC на QuickSwap (Polygon)
-PAIR_ADDRESS = Web3.to_checksum_address("0x4d6b2b90fdb1c68b9b37c58d93d6309d63f03bc0")
+# 2) QuickSwap V2 Router (Polygon)
+QUICKSWAP_ROUTER = Web3.to_checksum_address("0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff")
 
-PAIR_ABI = [
+# Минимальный ABI для getAmountsOut
+ROUTER_ABI = [
     {
-        "inputs": [],
-        "name": "getReserves",
-        "outputs": [
-            {"internalType": "uint112", "name": "_reserve0", "type": "uint112"},
-            {"internalType": "uint112", "name": "_reserve1", "type": "uint112"},
-            {"internalType": "uint32", "name": "_blockTimestampLast", "type": "uint32"},
-        ],
-        "stateMutability": "view",
+        "name": "getAmountsOut",
         "type": "function",
-    },
+        "stateMutability": "view",
+        "inputs": [
+            {"name": "amountIn", "type": "uint256"},
+            {"name": "path", "type": "address[]"}
+        ],
+        "outputs": [
+            {"name": "amounts", "type": "uint256[]"}
+        ]
+    }
 ]
 
-pair = w3.eth.contract(address=PAIR_ADDRESS, abi=PAIR_ABI)
+# 3) Адреса и десятичные
+TOKENS = {
+    # те же адреса, что и в твоём Main.py
+    "USDT": Web3.to_checksum_address("0xc2132d05d31c914a87c6611c10748aeb04b58e8f"),
+    "WPOL": Web3.to_checksum_address("0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270"),  # WMATIC
+    "POL":  Web3.to_checksum_address("0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270"),  # alias на WMATIC
+}
+DECIMALS = {"USDT": 6, "WPOL": 18, "POL": 18}
 
-def get_quote_web3(src_symbol, dst_symbol, amount_units):
+def _norm_symbol(sym: str) -> str:
+    """Сводим POL/MATIC/WMATIC к одному обозначению для роутера."""
+    s = sym.upper()
+    if s in ("POL", "MATIC", "WMATIC", "WPOL"):
+        return "WPOL"
+    return s
+
+def get_quote_web3(src_symbol: str, dst_symbol: str, amount_units: int):
     """
-    Возвращает данные в формате, как get_quote_ds / get_quote_1inch
-    Пока только для пула USDT–MATIC (пример).
+    Возвращает dict с ключом buyAmount (строкой), как у 1inch/Dexscreener-пути,
+    либо выбрасывает ValueError для неподдерживаемых пар (чтобы это попало в отчёт).
     """
-    try:
-        if not w3.is_connected():
-            return None
+    src_symbol = _norm_symbol(src_symbol)
+    dst_symbol = _norm_symbol(dst_symbol)
 
-        reserves = pair.functions.getReserves().call()
-        reserve0, reserve1 = reserves[0], reserves[1]
+    # Минимальный демо-кейс: поддерживаем только USDT <-> WPOL
+    supported = {("USDT", "WPOL"), ("WPOL", "USDT")}
+    if (src_symbol, dst_symbol) not in supported:
+        raise ValueError(f"Web3 unsupported pair in demo: {src_symbol}->{dst_symbol}")
 
-        # Упрощение: считаем, что token0 = USDT (6 знаков), token1 = MATIC (18 знаков)
-        # В реальном коде нужно будет проверять порядок!
-        amount_in = amount_units * 10**6  # USDT -> wei
-        amount_out = (amount_in * reserve1) // (reserve0 + amount_in)
+    router = w3.eth.contract(address=QUICKSWAP_ROUTER, abi=ROUTER_ABI)
 
-        price = amount_out / 1e18 / (amount_units)  # цена MATIC в USDT
-        liquidity_usd = reserve0 / 1e6 + (reserve1 / 1e18 * price)
+    path = [TOKENS[src_symbol], TOKENS[dst_symbol]]
+    # amount_units уже в "вей" базового токена — бери как есть
+    amounts = router.functions.getAmountsOut(int(amount_units), path).call()
+    out_units = int(amounts[-1])
 
-        return {
-            "src_symbol": src_symbol,
-            "dst_symbol": dst_symbol,
-            "amount_in": amount_units,
-            "amount_out": amount_out / 1e18,
-            "price": price,
-            "liquidity_usd": liquidity_usd,
-            "source": "Web3",
-        }
-
-    except Exception as e:
-        print("Web3 error:", e)
-        return None
+    # Возвращаем в привычном формате
+    return {
+        "buyAmount": str(out_units),
+        "protocols": [],   # чтобы downstream код не ломался
+        "source": "Web3"
+    }
 
 if __name__ == "__main__":
     print("Connected:", w3.is_connected())
