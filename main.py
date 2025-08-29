@@ -78,7 +78,7 @@ GRAPH_GATEWAY_BASE     = "https://gateway.thegraph.com/api"
 DEXSCREENER_TOKEN_URL  = "https://api.dexscreener.com/latest/dex/tokens/"
 
 from pipeline_web3 import get_quote_web3
-USE_WEB3 = os.getenv("USE_WEB3", "false").lower() == "true"
+USE_WEB3 = os.getenv("USE_WEB3", "").strip().lower() in ("true", "1", "yes")
 
 # ===================== TOKENS & DECIMALS =====================
 TOKENS = {
